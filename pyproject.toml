@@ -1,7 +1,7 @@
 [project]
 name = "transcribeai-backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "Ce projet permet d'instancier une API exposant des endpoints pour effectuer des transcriptions mono-voix et/ou multivoix ainsi que des workers pour appeler les fonctions de transcriptions de manière asynchrone."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
