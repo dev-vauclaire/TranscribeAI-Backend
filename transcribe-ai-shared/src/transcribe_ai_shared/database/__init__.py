@@ -1,0 +1,2 @@
+from transcribe_ai_shared.database.job_model import JobModel
+from transcribe_ai_shared.database.job_repositorie import JobRepositorie

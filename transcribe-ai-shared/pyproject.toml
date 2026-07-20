@@ -1,0 +1,17 @@
+[project]
+name = "transcribe-ai-shared"
+version = "0.1.0"
+description = "Package partagé pour les applications backend de Transcribe AI"
+readme = "README.md"
+authors = [
+    { name = "dev-vauclaire", email = "dev@ch-vauclaire.fr" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "redis>=8.0.1",
+    "sqlalchemy>=2.0.51",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.11,<0.11.0"]
+build-backend = "uv_build"
