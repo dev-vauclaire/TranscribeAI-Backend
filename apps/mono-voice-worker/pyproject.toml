@@ -1,0 +1,23 @@
+[project]
+name = "mono-voice-worker"
+version = "0.1.0"
+description = "Worker chargé de contacter un micro service de transcription mono voix"
+readme = "README.md"
+authors = [
+    { name = "dev-vauclaire", email = "dev@ch-vauclaire.fr" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.34.2",
+    "transcribe-ai-shared",
+]
+
+[tool.uv.sources]
+transcribe-ai-shared = { workspace = true }
+
+[project.scripts]
+mono-voice-worker = "mono_voice_worker:main"
+
+[build-system]
+requires = ["uv_build>=0.10.11,<0.11.0"]
+build-backend = "uv_build"

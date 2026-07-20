@@ -1,0 +1,22 @@
+[project]
+name = "transcribe-ai-api"
+version = "0.1.0"
+description = "API REST pour l'application Transcribe AI"
+readme = "README.md"
+authors = [
+    { name = "dev-vauclaire", email = "dev@ch-vauclaire.fr" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "transcribe-ai-shared",
+]
+
+[tool.uv.sources]
+transcribe-ai-shared = { workspace = true }
+
+[project.scripts]
+transcribe-ai-api = "transcribe_ai_api:main"
+
+[build-system]
+requires = ["uv_build>=0.10.11,<0.11.0"]
+build-backend = "uv_build"
