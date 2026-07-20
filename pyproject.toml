@@ -1,29 +1,21 @@
-[project]
-name = "transcribeai-backend"
-version = "0.1.0"
-description = "Ce projet permet d'instancier une API exposant des endpoints pour effectuer des transcriptions mono-voix et/ou multivoix ainsi que des workers pour appeler les fonctions de transcriptions de manière asynchrone."
-readme = "README.md"
-requires-python = ">=3.12"
-dependencies = [
-    "blinker==1.9.0",
-    "certifi==2025.11.12",
-    "charset-normalizer==3.4.4",
-    "click==8.3.1",
-    "dotenv==0.9.9",
-    "flask==3.1.2",
-    "flask-cors==6.0.2",
-    "flask-sqlalchemy==3.1.1",
-    "greenlet==3.3.0",
-    "idna==3.11",
-    "itsdangerous==2.2.0",
-    "jinja2==3.1.6",
-    "markupsafe==3.0.3",
-    "psycopg2==2.9.11",
-    "python-dotenv==1.2.1",
-    "redis==7.1.0",
-    "requests==2.32.5",
-    "sqlalchemy==2.0.45",
-    "typing-extensions==4.15.0",
-    "urllib3==2.6.2",
-    "werkzeug==3.1.4",
+[tool.uv.workspace]
+members = [
+    "apps/transcribe-ai-api",
+    "apps/mono-voice-worker",
+    "apps/multi-voice-worker",
+    "transcribe-ai-shared",
 ]
+
+[dependency-groups]
+dev = [
+    "poethepoet>=0.37,<1",
+    "pre-commit>=4,<5",
+    "pytest>=8,<10",
+]
+
+[tool.poe.tasks]
+api = "python apps/transcribe-ai-api/src/main.py"
+mono-voice = "python apps/mono-voice-worker/src/main.py"
+multi-voice = "python apps/multi-voice-worker/src/main.py"
+test = "pytest"
+pre-commit = "pre-commit run --all-files"
