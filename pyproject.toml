@@ -8,14 +8,15 @@ members = [
 
 [dependency-groups]
 dev = [
-    "poethepoet>=0.37,<1",
     "pre-commit>=4,<5",
     "pytest>=8,<10",
 ]
 
-[tool.poe.tasks]
-api = "python apps/transcribe-ai-api/src/main.py"
-mono-voice = "python apps/mono-voice-worker/src/main.py"
-multi-voice = "python apps/multi-voice-worker/src/main.py"
-test = "pytest"
-pre-commit = "pre-commit run --all-files"
+[tool.pytest.ini_options]
+testpaths = [
+    "apps/*/tests",
+    "transcribe-ai-shared/tests",
+]
+markers = [
+    "integration: tests involving several components or an I/O boundary",
+]
