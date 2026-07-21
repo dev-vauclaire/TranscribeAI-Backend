@@ -1,9 +1,12 @@
-import os
-# Configuration commune à toute les instances de l'application
-class BaseConfig:
-    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres")
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SECRET_KEY = os.getenv("SECRET_KEY", "default_secret")
-    AUDIO_FOLDER_PATH = os.getenv("AUDIO_FOLDER_PATH", "./audio_files")
-    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    DEBUG = bool(os.getenv("SECRET_KEY", "True"))
+from pydantic import (
+  Field,
+  PostgresDsn,
+  RedisDsn,
+)
+
+from pydantic_settings import BaseSettings
+
+class TranscribeAiBaseSettings(BaseSettings):
+  redis_dsn: RedisDsn = Field(default='redis://localhost:6379/0', repr=False)
+  pg_dsn: PostgresDsn = Field(default='postgresql+psycopg2://postgres:postgres@localhost:5432/postgres', repr=False)
+  audio_folder_path: str = Field(default='tmp/audios_buffers', repr=False)
