@@ -1,0 +1,83 @@
+# Hooks de qualité, sécurité et validation du projet.
+
+repos:
+  # Vérifications générales
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+
+      - id: end-of-file-fixer
+
+      - id: check-yaml
+
+      - id: check-toml
+
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+
+      - id: check-merge-conflict
+
+      - id: check-case-conflict
+
+      - id: check-symlinks
+
+      - id: detect-private-key
+
+      - id: debug-statements
+
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # Markdown
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.49.0
+    hooks:
+      - id: markdownlint
+        args: [--fix]
+
+  # Python : lint, imports et formatage
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.21
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+
+      - id: ruff-format
+
+  # Validation sémantique de pyproject.toml
+  - repo: https://github.com/abravalheri/validate-pyproject
+    rev: v0.25
+    hooks:
+      - id: validate-pyproject
+
+  # Synchronisation de uv.lock
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.11.28
+    hooks:
+      - id: uv-lock
+
+  # Dockerfile
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.14.0
+    hooks:
+      - id: hadolint-docker
+
+  # Détection de secrets
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  # SAST : exécuté au pre-push
+  - repo: https://github.com/semgrep/pre-commit
+    rev: v1.169.0
+    hooks:
+      - id: semgrep
+        args:
+          - --config
+          - p/security-audit
+          - --error
+          - --metrics=off
+        files: \.py$
+        stages: [pre-push]
