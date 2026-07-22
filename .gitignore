@@ -6,3 +6,9 @@ __pycache__/
 *.py[cod]
 audio_files/
 .venv/
+tmp/
+export_env.sh
+.pytest_cache
+.agents
+.codex
+.ruff_cache/
