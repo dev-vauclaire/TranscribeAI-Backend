@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "requests>=2.34.2",
+    "requests-toolbelt>=1.0.0,<2",
     "transcribe-ai-shared",
 ]
 
@@ -16,7 +17,7 @@ dependencies = [
 transcribe-ai-shared = { workspace = true }
 
 [project.scripts]
-mono-voice-worker = "mono_voice_worker:main"
+mono-voice-worker = "mono_voice_worker.main:main"
 
 [build-system]
 requires = ["uv_build>=0.10.11,<0.11.0"]
