@@ -218,6 +218,7 @@ name = "mono-voice-worker"
 version = "0.1.0"
 source = { editable = "apps/mono-voice-worker" }
 dependencies = [
+    { name = "pydantic" },
     { name = "requests" },
     { name = "requests-toolbelt" },
     { name = "transcribe-ai-shared" },
@@ -225,6 +226,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "pydantic", specifier = ">=2.13.4,<3" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "requests-toolbelt", specifier = ">=1.0.0,<2" },
     { name = "transcribe-ai-shared", editable = "transcribe-ai-shared" },
