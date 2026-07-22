@@ -10,8 +10,8 @@ from transcribe_ai_shared.database.repositories.job_repository import JobReposit
 pytestmark = pytest.mark.integration
 
 
-def make_job(*, status=JobStatus.PENDING, file_path="/audio/job.wav"):
-    return Job(type=JobType.MONO_VOICE, status=status, file_path=file_path)
+def make_job(*, status=JobStatus.PENDING, filename="job.wav"):
+    return Job(type=JobType.MONO_VOICE, status=status, filename=filename)
 
 
 def test_add_and_find_job_by_database_id_and_public_uuid(db_session):
@@ -47,7 +47,7 @@ def test_complete_job_records_result_and_utc_end_time(db_session):
     assert completed is job
     assert saved.status is JobStatus.COMPLETED
     assert saved.result == {"text": "Bonjour"}
-    assert saved.end_at.utcoffset() == timezone.utc.utcoffset(saved.end_at)
+    assert saved.ended_at.utcoffset() == timezone.utc.utcoffset(saved.ended_at)
 
 
 def test_fail_job_records_error_and_provided_end_time(db_session):
@@ -62,7 +62,7 @@ def test_fail_job_records_error_and_provided_end_time(db_session):
     assert failed is job
     assert saved.status is JobStatus.FAILED
     assert saved.error_message == "Whisper unavailable"
-    assert saved.end_at == ended_at
+    assert saved.ended_at == ended_at
 
 
 def test_list_by_status_filters_and_uses_stable_pagination(db_session):

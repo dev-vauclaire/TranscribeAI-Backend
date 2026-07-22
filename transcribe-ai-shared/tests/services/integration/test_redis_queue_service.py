@@ -4,6 +4,10 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
+def test_pop_job_returns_none_when_queue_is_empty(redis_queue_service):
+    assert redis_queue_service.pop_job() is None
+
+
 def test_push_job_stores_and_returns_job_uuid(redis_queue_service):
     job_uuid = "2c0672d8-6f95-4bdf-848b-060ec2f264d2"
 

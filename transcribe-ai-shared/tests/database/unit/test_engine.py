@@ -1,7 +1,12 @@
 from unittest.mock import Mock
 
+import pytest
+
 from transcribe_ai_shared.database import engine as engine_module
 from transcribe_ai_shared.database.config import DatabaseConfig
+
+
+pytestmark = pytest.mark.unit
 
 
 def test_create_db_engine_forwards_configuration(monkeypatch):

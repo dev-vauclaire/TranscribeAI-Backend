@@ -1,5 +1,10 @@
+import pytest
+
 from transcribe_ai_shared.database.base import NAMING_CONVENTION
 from transcribe_ai_shared.database.models.job_model import Job, JobStatus, JobType
+
+
+pytestmark = pytest.mark.unit
 
 
 def test_job_enums_match_shared_contract():

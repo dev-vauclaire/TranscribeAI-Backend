@@ -18,5 +18,6 @@ testpaths = [
     "transcribe-ai-shared/tests",
 ]
 markers = [
+    "unit: isolated tests without external services or I/O boundaries",
     "integration: tests involving several components or an I/O boundary",
 ]

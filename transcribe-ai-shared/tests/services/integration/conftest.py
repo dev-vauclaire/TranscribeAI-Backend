@@ -28,7 +28,12 @@ def redis_queue_service():
         cleanup_client.close()
         pytest.fail(f"Cannot connect to {TEST_REDIS_URL_ENV}: {error}")
 
-    service = RedisQueueService(redis_url, queue_name)
+    service = RedisQueueService(
+        redis_url,
+        queue_name,
+        pop_timeout_seconds=0.1,
+        socket_timeout_seconds=1.0,
+    )
 
     try:
         yield service

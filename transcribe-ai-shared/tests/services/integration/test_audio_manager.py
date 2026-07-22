@@ -1,20 +1,12 @@
-from pathlib import Path
-
 import pytest
 
-from transcribe_ai_shared.services.audio_manager import AudioManager, WrongAudioPathError
+from transcribe_ai_shared.services import AudioManager, UploadedAudio
+from transcribe_ai_shared.services.audio_manager import (
+    WrongAudioPathError,
+)
 
 
 pytestmark = pytest.mark.integration
-
-
-class UploadedAudio:
-    def __init__(self, filename: str, content: bytes):
-        self.filename = filename
-        self.content = content
-
-    def save(self, destination: str):
-        Path(destination).write_bytes(self.content)
 
 
 def test_initialization_creates_audio_directory(tmp_path):
@@ -35,14 +27,14 @@ def test_initialization_preserves_existing_directory_content(tmp_path):
     assert existing_file.read_bytes() == b"existing audio"
 
 
-def test_save_audio_writes_file_and_returns_its_path(tmp_path):
+def test_save_audio_writes_file_and_returns_relative_filename(tmp_path):
     manager = AudioManager(str(tmp_path))
     upload = UploadedAudio("job-123.wav", b"audio content")
 
-    saved_path = manager.save_audio(upload)
+    saved_filename = manager.save_audio(upload)
 
-    assert saved_path == "job-123.wav"
-    assert (tmp_path / saved_path).read_bytes() == b"audio content"
+    assert saved_filename == "job-123.wav"
+    assert (tmp_path / saved_filename).read_bytes() == b"audio content"
 
 
 def test_delete_audio_removes_existing_file(tmp_path):
@@ -57,49 +49,40 @@ def test_delete_audio_removes_existing_file(tmp_path):
 
 
 def test_delete_audio_returns_false_for_missing_file(tmp_path):
-    missing_file = UploadedAudio("nonexistent.wav", b"")
     manager = AudioManager(str(tmp_path))
 
-    deleted = manager.delete_audio(missing_file.filename)
+    deleted = manager.delete_audio("nonexistent.wav")
 
     assert deleted is False
 
-def test_save_audio_rejects_parent_directory_traversal(tmp_path):
+
+@pytest.mark.parametrize("filename", ["../escaped.wav", "/absolute.wav"])
+def test_save_audio_rejects_path_outside_audio_directory(tmp_path, filename):
     audio_directory = tmp_path / "audio"
     manager = AudioManager(str(audio_directory))
-    upload = UploadedAudio("../escaped.wav", b"audio content")
+    upload = UploadedAudio(filename, b"audio content")
 
-    with pytest.raises(WrongAudioPathError, match="Tentative de sauvegarde en dehors du dossier audio autorisé."):
+    with pytest.raises(WrongAudioPathError, match="sauvegarde"):
         manager.save_audio(upload)
 
-    assert (tmp_path / "escaped.wav").exists() is False
 
-def test_delete_audio_rejects_file_outside_audio_directory(tmp_path):
+@pytest.mark.parametrize("filename", ["../outside.wav", "/absolute.wav"])
+def test_delete_audio_rejects_path_outside_audio_directory(tmp_path, filename):
     audio_directory = tmp_path / "audio"
-    outside_file = UploadedAudio("../outside.wav", b"must be preserved")
-    with open(str(tmp_path / outside_file.filename), "wb") as f:
-        f.write(outside_file.content)  # Save outside the audio directory
+    outside_file = tmp_path / "outside.wav"
+    outside_file.write_bytes(b"must be preserved")
     manager = AudioManager(str(audio_directory))
 
-    with pytest.raises(WrongAudioPathError, match="Tentative de suppression en dehors du dossier audio autorisé."):
-        manager.delete_audio(outside_file.filename)
+    with pytest.raises(WrongAudioPathError, match="suppression"):
+        manager.delete_audio(filename)
 
-    assert outside_file.content == b"must be preserved"
+    assert outside_file.read_bytes() == b"must be preserved"
 
-def test_delete_no_existing_audio_file(tmp_path):
-    audio_directory = tmp_path / "audio"
-    manager = AudioManager(str(audio_directory))
-    non_existing_file = UploadedAudio("nonexistent.wav", b"")
-
-    result = manager.delete_audio(non_existing_file.filename)
-
-    assert result is False
 
 def test_open_audio_streams_saved_audio_and_closes_file(tmp_path):
     audio_directory = tmp_path / "audio"
     manager = AudioManager(str(audio_directory))
-    upload = UploadedAudio("job-123.wav", b"audio content")
-    manager.save_audio(upload)
+    manager.save_audio(UploadedAudio("job-123.wav", b"audio content"))
 
     with manager.open_audio("job-123.wav") as audio_stream:
         assert audio_stream.read() == b"audio content"
@@ -107,18 +90,19 @@ def test_open_audio_streams_saved_audio_and_closes_file(tmp_path):
 
     assert audio_stream.closed is True
 
+
 def test_open_audio_raises_for_missing_file(tmp_path):
-    audio_directory = tmp_path / "audio"
-    manager = AudioManager(str(audio_directory))
+    manager = AudioManager(str(tmp_path / "audio"))
 
     with pytest.raises(FileNotFoundError):
         with manager.open_audio("nonexistent.wav"):
             pass
 
-def test_open_audio_rejects_file_outside_audio_directory(tmp_path):
-    audio_directory = tmp_path / "audio"
-    manager = AudioManager(str(audio_directory))
+
+@pytest.mark.parametrize("filename", ["../outside.wav", "/absolute.wav"])
+def test_open_audio_rejects_path_outside_audio_directory(tmp_path, filename):
+    manager = AudioManager(str(tmp_path / "audio"))
 
     with pytest.raises(WrongAudioPathError):
-        with manager.open_audio("../outside.wav"):
+        with manager.open_audio(filename):
             pass

@@ -4,10 +4,20 @@ import pytest
 
 from transcribe_ai_shared.database.models.job_model import Job, JobStatus, JobType
 from transcribe_ai_shared.database.repositories.job_repository import JobRepository
-from transcribe_ai_shared.database.session import create_session_factory, transaction
+from transcribe_ai_shared.database.session import (
+    check_postgres_connection,
+    create_session_factory,
+    transaction,
+)
 
 
 pytestmark = pytest.mark.integration
+
+
+def test_check_postgres_connection_executes_probe(db_engine):
+    factory = create_session_factory(db_engine)
+
+    check_postgres_connection(factory)
 
 
 def test_transaction_commits_on_success(db_engine):
@@ -19,7 +29,7 @@ def test_transaction_commits_on_success(db_engine):
             Job(
                 uuid=job_uuid,
                 type=JobType.MONO_VOICE,
-                file_path="/audio/committed.wav",
+                filename="committed.wav",
             )
         )
 
@@ -37,7 +47,7 @@ def test_transaction_rolls_back_on_error(db_engine):
                 Job(
                     uuid=job_uuid,
                     type=JobType.MONO_VOICE,
-                    file_path="/audio/rolled-back.wav",
+                    filename="rolled-back.wav",
                 )
             )
             raise RuntimeError("processing failed")
@@ -56,7 +66,7 @@ def test_multiple_repository_operations_are_atomic(db_engine):
             Job(
                 uuid=job_uuid,
                 type=JobType.MONO_VOICE,
-                file_path="/audio/job.wav",
+                filename="job.wav",
             )
         )
         repository.update_status(job.id, JobStatus.PROCESSING)
@@ -77,7 +87,7 @@ def test_repository_changes_are_rolled_back_together(db_engine):
             Job(
                 uuid=job_uuid,
                 type=JobType.MONO_VOICE,
-                file_path="/audio/job.wav",
+                filename="job.wav",
             )
         )
 

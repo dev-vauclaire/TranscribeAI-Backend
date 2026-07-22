@@ -16,6 +16,9 @@ SETTING_ENV_NAMES = (
 )
 
 
+pytestmark = pytest.mark.unit
+
+
 @pytest.fixture(autouse=True)
 def isolate_settings_environment(monkeypatch):
     for environment_name in SETTING_ENV_NAMES:
@@ -27,6 +30,7 @@ def test_settings_use_expected_non_database_defaults():
 
     assert str(settings.redis_dsn) == "redis://localhost:6379/0"
     assert settings.audio_folder_path == "tmp/audios_buffers"
+
 
 def test_default_settings_are_valid():
     settings = TranscribeAiBaseSettings()
@@ -47,7 +51,10 @@ def test_settings_read_uppercase_environment_variables(monkeypatch):
 
 
 def test_explicit_values_take_precedence_over_environment(monkeypatch):
-    monkeypatch.setenv("PG_DSN", "postgresql://environment:password@postgres.example/environment",)
+    monkeypatch.setenv(
+        "PG_DSN",
+        "postgresql://environment:password@postgres.example/environment",
+    )
     monkeypatch.setenv("REDIS_DSN", "redis://redis.example:6379/1")
     monkeypatch.setenv("AUDIO_FOLDER_PATH", "/environment/audio")
 
@@ -97,6 +104,7 @@ def test_settings_reject_invalid_dsn_schemes(
 
     assert error.value.errors()[0]["loc"] == (field_name,)
     assert error.value.errors()[0]["type"] == "url_scheme"
+
 
 def test_settings_repr_does_not_expose_credentials():
     settings = TranscribeAiBaseSettings(

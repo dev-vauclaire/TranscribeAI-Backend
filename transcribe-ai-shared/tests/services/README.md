@@ -1,4 +1,14 @@
-# Service integration tests
+# Service tests
+
+## Unit tests
+
+Les tests unitaires de `RedisQueueService` utilisent un client simulé :
+
+```bash
+uv run pytest transcribe-ai-shared/tests/services/unit
+```
+
+## Integration tests
 
 The `AudioManager` tests use a real temporary directory managed by pytest.
 

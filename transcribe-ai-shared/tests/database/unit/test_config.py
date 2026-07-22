@@ -4,6 +4,10 @@ import pytest
 
 from transcribe_ai_shared.database.config import DatabaseConfig
 
+
+pytestmark = pytest.mark.unit
+
+
 def test_database_config_has_conservative_pool_defaults():
     test_url = "postgresql://user:secret@db/transcribe_test"
     config = DatabaseConfig(url=test_url)

@@ -19,11 +19,11 @@ def test_postgresql_schema_contains_expected_native_types(db_engine):
     assert isinstance(columns["type"]["type"], ENUM)
     assert isinstance(columns["status"]["type"], ENUM)
     assert isinstance(columns["result"]["type"], JSONB)
-    assert columns["file_path"]["nullable"] is False
+    assert columns["filename"]["nullable"] is False
 
 
 def test_postgresql_applies_job_defaults_and_persists_mutable_json(db_session):
-    job = Job(type=JobType.MONO_VOICE, file_path="/audio/job.wav", result={})
+    job = Job(type=JobType.MONO_VOICE, filename="job.wav", result={})
     db_session.add(job)
     db_session.commit()
 
