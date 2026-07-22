@@ -10,9 +10,7 @@ from transcribe_ai_shared import (
 
 def main() -> None:
     mono_voice_settings = WorkerMonoVoiceSettings()
-    engine = create_db_engine(
-        DatabaseConfig(url=str(mono_voice_settings.pg_dsn))
-    )
+    engine = create_db_engine(DatabaseConfig(url=str(mono_voice_settings.pg_dsn)))
 
     try:
         session_factory = create_session_factory(engine)
@@ -20,9 +18,7 @@ def main() -> None:
             str(mono_voice_settings.redis_dsn),
             mono_voice_settings.redis_queue_name_mono_voice,
         )
-        client_whisper = ClientWhisper(
-            mono_voice_settings.whisper_service_url
-        )
+        client_whisper = ClientWhisper(mono_voice_settings.whisper_service_url)
 
         print("Lancement des tests de connexion aux services...")
         check_postgres_connection(session_factory)

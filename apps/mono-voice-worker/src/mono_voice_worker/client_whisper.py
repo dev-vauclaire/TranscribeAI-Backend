@@ -22,7 +22,9 @@ class WhisperPayload(BaseModel):
 
 class WhisperClientError(Exception):
     """Erreur produite lors d'un échange avec le service Whisper."""
+
     pass
+
 
 class ClientWhisper:
     def __init__(
@@ -53,10 +55,7 @@ class ClientWhisper:
         *,
         filename: str,
     ) -> WhisperPayload:
-        content_type = (
-            mimetypes.guess_type(filename)[0]
-            or "application/octet-stream"
-        )
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
         multipart = MultipartEncoder(
             fields={
                 "audioFile": (filename, audio_file, content_type),
@@ -72,9 +71,7 @@ class ClientWhisper:
             response.raise_for_status()
             return WhisperPayload.model_validate(response.json())
         except (RequestException, ValidationError) as error:
-            raise WhisperClientError(
-                "La transcription Whisper a échoué"
-            ) from error
+            raise WhisperClientError("La transcription Whisper a échoué") from error
 
     def cancel_transcription(self, job_id: str) -> bool:
         try:

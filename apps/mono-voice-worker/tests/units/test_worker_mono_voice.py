@@ -163,7 +163,9 @@ def test_run_once_marks_missing_audio_as_failed(monkeypatch, worker_dependencies
         ended_at=ANY,
     )
     worker_dependencies.whisper_client.send_to_whisper_service.assert_not_called()
-    worker_dependencies.audio_manager.delete_audio.assert_called_once_with("missing.wav")
+    worker_dependencies.audio_manager.delete_audio.assert_called_once_with(
+        "missing.wav"
+    )
 
 
 def test_run_once_marks_whisper_error_as_failed(monkeypatch, worker_dependencies):
