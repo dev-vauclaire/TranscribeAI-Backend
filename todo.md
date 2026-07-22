@@ -38,49 +38,49 @@ Une tâche est terminée lorsque le comportement est implémenté, testé et doc
 
 ### Dépendances directes explicites
 
-- [ ] Déclarer `pydantic` dans `apps/mono-voice-worker/pyproject.toml`.
+- [x] Déclarer `pydantic` dans `apps/mono-voice-worker/pyproject.toml`.
   - Le worker importe directement `BaseModel` et `Field` : il ne doit pas dépendre du fait que `transcribe-ai-shared` installe Pydantic transitivement.
-- [ ] Exporter `SessionFactory` depuis l'API publique `transcribe_ai_shared.database`, puis typer le worker avec cet alias.
+- [x] Exporter `SessionFactory` depuis l'API publique `transcribe_ai_shared.database`, puis typer le worker avec cet alias.
   - Retirer les imports directs de `sqlalchemy` du worker et de son `main.py` s'ils ne servent qu'au typage.
   - Si le worker continue à importer SQLAlchemy directement, déclarer alors `sqlalchemy` dans son propre `pyproject.toml`.
-- [ ] Vérifier qu'une installation isolée du worker contient toutes ses dépendances directes et que ses imports fonctionnent sans dépendance implicite.
+- [x] Vérifier qu'une installation isolée du worker contient toutes ses dépendances directes et que ses imports fonctionnent sans dépendance implicite.
 
 Règle à appliquer : **si un package contient `import librairie`, cette librairie doit être déclarée dans son `pyproject.toml`, sauf si l'import est supprimé derrière une abstraction du package partagé**. Les modules de la bibliothèque standard ne sont pas concernés.
 
 ### Contrat de stockage audio et schéma initial
 
-- [ ] Remplacer dans les tests les valeurs comme `filename="/audio/job.wav"` par un nom relatif comme `filename="job.wav"`.
-- [ ] Ajouter le test aller-retour du contrat : sauvegarde par `AudioManager` → valeur retournée persistée dans `Job.filename` → réouverture par un autre `AudioManager` configuré avec le même dossier.
-- [ ] Vérifier que les chemins absolus et les traversées (`../`) sont refusés pour la sauvegarde, la lecture et la suppression.
+- [x] Remplacer dans les tests les valeurs comme `filename="/audio/job.wav"` par un nom relatif comme `filename="job.wav"`.
+- [x] Ajouter le test aller-retour du contrat : sauvegarde par `AudioManager` → valeur retournée persistée dans `Job.filename` → réouverture par un autre `AudioManager` configuré avec le même dossier.
+- [x] Vérifier que les chemins absolus et les traversées (`../`) sont refusés pour la sauvegarde, la lecture et la suppression.
 - [ ] Mettre à jour tous les consommateurs encore basés sur `Job.file_path` ou `Job.end_at`.
   - Le multi worker utilise encore `job.file_path`.
   - l'API utilise encore `job.end_at` dans les contrôleurs de transcription.
-- [ ] Documenter la commande de recréation de la base locale pendant cette phase de conception destructive du schéma.
+- [x] Documenter la commande de recréation de la base locale pendant cette phase de conception destructive du schéma.
 - [ ] Geler les noms et types finaux du modèle `Job` avant d'initialiser Alembic.
 
 ### Erreurs fonctionnelles du mono worker
 
-- [ ] Introduire une exception applicative `WhisperClientError` produite par `ClientWhisper`.
+- [x] Introduire une exception applicative `WhisperClientError` produite par `ClientWhisper`.
   - Y traduire les erreurs HTTP/réseau et les erreurs de validation Pydantic de la réponse.
   - Le worker doit dépendre de ce contrat et non de `requests.exceptions.RequestException`.
   - Vérifier qu'une réponse Whisper invalide place bien le job en `FAILED` au lieu de le laisser en `PROCESSING`.
-- [ ] Initialiser les identifiants utilisés dans les messages d'erreur avant le `try`, afin qu'une erreur de lecture ou de décodage du message Redis ne masque pas l'erreur initiale.
-- [ ] Définir le comportement pour un message Redis qui n'est pas un UUID valide : log explicite, absence d'accès BDD et poursuite contrôlée du worker.
-- [ ] Ajouter un timeout à `ClientWhisper.cancel_transcription` ou retirer cette méthode tant que cette fonctionnalité n'est pas utilisée.
+- [x] Initialiser les identifiants utilisés dans les messages d'erreur avant le `try`, afin qu'une erreur de lecture ou de décodage du message Redis ne masque pas l'erreur initiale.
+- [x] Définir le comportement pour un message Redis qui n'est pas un UUID valide : log explicite, absence d'accès BDD et poursuite contrôlée du worker.
+- [x] Ajouter un timeout à `ClientWhisper.cancel_transcription` ou retirer cette méthode tant que cette fonctionnalité n'est pas utilisée.
 
 ### Tests minimaux de validation
 
-- [ ] Remplacer les fichiers placeholders `tests/units/test.py` et `tests/integrations/test.py` par des fichiers nommés selon le comportement testé.
-- [ ] Tester `WorkerMonoVoiceSettings` : héritage des variables partagées, variables propres au worker et absence des valeurs sensibles dans `repr`.
-- [ ] Tester le worker avec des doubles injectés :
+- [x] Remplacer les fichiers placeholders `tests/units/test.py` et `tests/integrations/test.py` par des fichiers nommés selon le comportement testé.
+- [x] Tester `WorkerMonoVoiceSettings` : héritage des variables partagées, variables propres au worker et absence des valeurs sensibles dans `repr`.
+- [x] Tester le worker avec des doubles injectés :
   - succès : `PENDING → PROCESSING → COMPLETED`, résultat persisté et audio supprimé ;
   - job inconnu ;
   - fichier absent ;
   - erreur HTTP Whisper ;
   - payload Whisper invalide ;
   - vérification du rollback d'une unité de transaction.
-- [ ] Tester le bootstrap : chaque healthcheck est appelé, une erreur empêche le démarrage de la boucle et l'engine est libéré.
-- [ ] Exécuter la suite unitaire complète et les tests d'intégration PostgreSQL renommés.
+- [x] Tester le bootstrap : chaque healthcheck est appelé, une erreur empêche le démarrage de la boucle et l'engine est libéré.
+- [x] Exécuter la suite unitaire complète et les tests d'intégration PostgreSQL renommés.
 
 ## P1 — Obtenir un worker et un package partagé propres
 
@@ -99,19 +99,19 @@ Règle à appliquer : **si un package contient `import librairie`, cette librair
 
 ### API publique de `transcribe-ai-shared`
 
-- [ ] Restaurer une API publique explicite dans `transcribe_ai_shared/database/__init__.py`.
+- [x] Restaurer une API publique explicite dans `transcribe_ai_shared/database/__init__.py`.
   - Exporter les modèles, `JobRepository`, `DatabaseConfig`, `SessionFactory`, `create_db_engine`, `create_session_factory` et `transaction`.
   - Définir `__all__` dans les modules publics et ajouter un test de smoke des imports supportés.
   - Éviter d'obliger les consommateurs à connaître l'arborescence interne du package.
-- [ ] Corriger l'annotation du context manager `transaction` : utiliser `Generator[Session, None, None]` au lieu de `Iterator[Session]` avec `@contextmanager`.
-- [ ] Documenter dans le README du package partagé :
+- [x] Corriger l'annotation du context manager `transaction` : utiliser `Generator[Session, None, None]` au lieu de `Iterator[Session]` avec `@contextmanager`.
+- [x] Documenter dans le README du package partagé :
   - qui crée et détruit l'engine ;
   - pourquoi on injecte une `SessionFactory` ;
   - qu'une transaction possède une session courte et qu'elle commit/rollback automatiquement ;
   - le contrat relatif de `Job.filename` et `AudioManager` ;
   - les imports publics garantis.
-- [ ] Préciser les types et contrats de `RedisQueueService` (`push_job`, `pop_job`, healthcheck et timeouts).
-- [ ] Ajouter les tests unitaires Redis avec un client injecté ou simulé, puis un test d'intégration séparé avec une vraie instance Redis.
+- [x] Préciser les types et contrats de `RedisQueueService` (`push_job`, `pop_job`, healthcheck et timeouts).
+- [x] Ajouter les tests unitaires Redis avec un client injecté ou simulé, puis un test d'intégration séparé avec une vraie instance Redis.
 - [ ] Vérifier que le package partagé ne contient que des concepts réellement communs à plusieurs applications ; conserver les DTO Whisper dans le worker tant qu'ils sont spécifiques à ce service.
 
 ### Baseline Alembic après gel du modèle
@@ -125,7 +125,7 @@ Règle à appliquer : **si un package contient `import librairie`, cette librair
 ### Qualité et documentation
 
 - [ ] Ajouter Ruff et un vérificateur de types, puis corriger d'abord le périmètre worker/package partagé.
-- [ ] Ajouter un README au mono worker avec configuration, commande `uv`, dépendances externes et politique de démarrage.
+- [x] Ajouter un README au mono worker avec configuration, commande `uv`, dépendances externes et politique de démarrage.
 - [ ] Activer les hooks pre-commit dans un commit séparé une fois l'itération fonctionnelle stabilisée.
 - [ ] Faire exécuter en CI les tests unitaires à chaque changement et les tests d'intégration avec services dédiés.
 
