@@ -1,10 +1,12 @@
-from sqlalchemy import select
+from datetime import datetime, timezone
 from typing import Any, Sequence
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
+
 from transcribe_ai_shared.database.models.job_model import Job, JobStatus
-from datetime import datetime, timezone
+
 
 class JobRepository:
     def __init__(self, session: Session) -> None:
@@ -15,7 +17,7 @@ class JobRepository:
         self._session.add(job)
         self._session.flush()
         return job
-    
+
     # Récupère un job par son ID
     def get_by_id(self, job_id: int) -> Job | None:
         return self._session.get(Job, job_id)
@@ -41,10 +43,10 @@ class JobRepository:
             return None
         job.status = JobStatus.COMPLETED
         job.result = result_data
-        job.end_at = datetime.now(timezone.utc)
+        job.ended_at = datetime.now(timezone.utc)
         self._session.flush()
         return job
-    
+
     # Supprime un job une fois qu'il est completed
     def delete_job(self, job_id: int) -> bool:
         job = self.get_by_id(job_id)
@@ -60,17 +62,17 @@ class JobRepository:
         self,
         job_id: int,
         error_msg: str = "Une erreur est survenue",
-        end_at: datetime | None = None,
+        ended_at: datetime | None = None,
     ) -> Job | None:
         job = self.get_by_id(job_id)
         if not job:
             return None
         job.status = JobStatus.FAILED
-        job.end_at = end_at
+        job.ended_at = ended_at
         job.error_message = error_msg
         self._session.flush()
         return job
-    
+
     # Récupère une liste de jobs par status avec pagination
     def list_by_status(
         self,

@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True, slots=True)
 class DatabaseConfig:
-    # URL de connexion à la base de données.
+    # DSN (Data Source Name) de connexion à la base de données.
     url: str = field(repr=False)
 
     # Activez ou désactivez l'écho des requêtes SQL dans les journaux de log

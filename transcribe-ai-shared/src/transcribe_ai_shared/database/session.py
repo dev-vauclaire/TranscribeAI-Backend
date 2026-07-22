@@ -1,8 +1,7 @@
-from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import TypeAlias
+from typing import Generator, TypeAlias
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 
@@ -20,6 +19,11 @@ def create_session_factory(engine: Engine) -> SessionFactory:
 @contextmanager
 def transaction(
     session_factory: SessionFactory,
-) -> Iterator[Session]:
+) -> Generator[Session, None, None]:
     with session_factory.begin() as session:
         yield session
+
+
+def check_postgres_connection(session_factory: SessionFactory) -> None:
+    with transaction(session_factory) as session:
+        session.execute(text("SELECT 1"))
