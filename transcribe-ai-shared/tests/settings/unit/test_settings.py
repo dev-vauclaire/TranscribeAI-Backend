@@ -1,7 +1,7 @@
 import pytest
 from pydantic import PostgresDsn, RedisDsn, ValidationError
 
-from transcribe_ai_shared.BaseConfig import TranscribeAiBaseSettings
+from transcribe_ai_shared import TranscribeAiBaseSettings
 
 
 VALID_POSTGRES_DSN = "postgresql+psycopg2://user:password@postgres.example:5432/transcribe"
