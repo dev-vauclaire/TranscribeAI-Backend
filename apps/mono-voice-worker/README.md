@@ -1,3 +1,12 @@
-# TODO : 
-- Faire les tests unitaires et les tests d'intégrations
-- Voir pour initialiser une session SQLAlchemy dans le worker (je pense qu'on va juste appeler session factory depuis transcribe_ai_shared)
+# Mono voice worker
+
+Le worker est lancé depuis la racine du workspace avec :
+
+```shell
+uv run --package mono-voice-worker mono-voice-worker
+```
+
+Les variables disponibles sont documentées dans `.env.example`.
+
+Le démarrage échoue si PostgreSQL, Redis ou Whisper est indisponible. Le
+redémarrage du processus est pris en charge par l'orchestrateur.
