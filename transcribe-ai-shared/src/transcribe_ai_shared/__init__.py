@@ -1,4 +1,5 @@
 """Shared components used by the Transcribe AI backend applications."""
+
 from transcribe_ai_shared.base_settings import TranscribeAiBaseSettings
 from transcribe_ai_shared.database import (
     Base,

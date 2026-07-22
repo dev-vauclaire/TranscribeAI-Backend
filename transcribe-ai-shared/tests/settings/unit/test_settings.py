@@ -4,7 +4,9 @@ from pydantic import PostgresDsn, RedisDsn, ValidationError
 from transcribe_ai_shared import TranscribeAiBaseSettings
 
 
-VALID_POSTGRES_DSN = "postgresql+psycopg2://user:password@postgres.example:5432/transcribe"
+VALID_POSTGRES_DSN = (
+    "postgresql+psycopg2://user:password@postgres.example:5432/transcribe"
+)
 VALID_REDIS_DSN = "redis://:password@redis.example:6379/4"
 SETTING_ENV_NAMES = (
     "PG_DSN",

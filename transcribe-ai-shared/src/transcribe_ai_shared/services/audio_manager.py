@@ -1,22 +1,25 @@
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO
 
+
 class WrongAudioPathError(Exception):
     """Exception levée lorsqu'une tentative de sauvegarde d'un fichier audio est faite en dehors du dossier autorisé."""
+
     pass
+
 
 class UploadedAudio:
     """Représente un fichier audio téléchargé avec un nom de fichier et un contenu binaire."""
+
     def __init__(self, filename: str, content: bytes):
         self.filename = filename
         self.content = content
 
+
 # Gestion des fichiers audio
 class AudioManager:
     # Initialisation avec le dossier de stockage des audios
-    def __init__(self, folder_path : str):
+    def __init__(self, folder_path: str):
         self.folder_path = folder_path
         self._folder = Path(folder_path).resolve()
         self._folder.mkdir(parents=True, exist_ok=True)
@@ -31,7 +34,7 @@ class AudioManager:
         return file_path
 
     # Sauvegarde un fichier audio à l'emplacement spécifié
-    def save_audio(self, file : UploadedAudio) -> str:
+    def save_audio(self, file: UploadedAudio) -> str:
 
         try:
             file_path = self._resolve_audio_path(file.filename)

@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 
+
 @dataclass(frozen=True, slots=True)
 class DatabaseConfig:
     # DSN (Data Source Name) de connexion à la base de données.

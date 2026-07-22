@@ -17,9 +17,7 @@ def test_job_filename_round_trip_between_database_and_audio_storage(
     filename = first_manager.save_audio(
         UploadedAudio(filename="job.wav", content=b"audio content")
     )
-    job = JobRepository(db_session).add(
-        Job(type=JobType.MONO_VOICE, filename=filename)
-    )
+    job = JobRepository(db_session).add(Job(type=JobType.MONO_VOICE, filename=filename))
     db_session.commit()
     job_id = job.id
     db_session.expire_all()

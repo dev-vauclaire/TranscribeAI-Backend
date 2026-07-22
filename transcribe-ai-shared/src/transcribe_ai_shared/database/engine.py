@@ -2,6 +2,7 @@ from sqlalchemy import Engine, create_engine
 
 from transcribe_ai_shared.database.config import DatabaseConfig
 
+
 # Return une instance Engine configurée
 def create_db_engine(config: DatabaseConfig) -> Engine:
     return create_engine(

@@ -16,8 +16,7 @@ class RedisQueueService:
             raise ValueError("pop_timeout_seconds doit être strictement positif")
         if socket_timeout_seconds <= pop_timeout_seconds:
             raise ValueError(
-                "socket_timeout_seconds doit être supérieur à "
-                "pop_timeout_seconds"
+                "socket_timeout_seconds doit être supérieur à pop_timeout_seconds"
             )
         if socket_connect_timeout_seconds <= 0:
             raise ValueError(
@@ -62,7 +61,7 @@ class RedisQueueService:
         Retourne None si l'élément n'est pas dans la liste.
         """
         # lpos retourne l'index (0-based) de l'élément
-        index = self.redis.execute_command('LPOS', self.queue_name, job_uuid)
+        index = self.redis.execute_command("LPOS", self.queue_name, job_uuid)
         if index is not None:
             return index + 1
         return None
