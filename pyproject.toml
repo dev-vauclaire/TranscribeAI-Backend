@@ -10,6 +10,7 @@ members = [
 dev = [
     "pre-commit>=4,<5",
     "pytest>=8,<10",
+    "testcontainers[postgres,redis]>=4.14.2",
 ]
 
 [tool.pytest.ini_options]
