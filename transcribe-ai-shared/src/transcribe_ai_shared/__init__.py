@@ -14,13 +14,18 @@ from transcribe_ai_shared.database import (
     create_session_factory,
     transaction,
 )
-from transcribe_ai_shared.services import AudioManager, RedisQueueService
+from transcribe_ai_shared.services import (
+    AudioManager,
+    RedisQueueService,
+    WrongAudioPathError,
+)
 
 __all__ = [
     "AudioManager",
     "Base",
     "DatabaseConfig",
     "Job",
+    "WrongAudioPathError",
     "JobRepository",
     "JobStatus",
     "JobType",
