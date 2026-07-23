@@ -6,6 +6,9 @@
   - [Objectif du projet](#objectif-du-projet)
   - [Architecture du projet et conventions](#architecture-du-projet-et-conventions)
   - [Stack technique](#stack-technique)
+- [Test](#tests)
+- [Hooks](#hooks)
+- [Conteneurisation](#conteneurisation)
 
 ## Présentation du backend
 
@@ -28,5 +31,15 @@ Il se compose de 3 applications et d'un package partagé entre elles.
 
 - `uv` pour la gestion des dépendances et du workspace
 - `Docker` pour la conteneurisation
-- `pytest et docker compose` pour les tests
+- `pytest et Testcontainers` pour les tests
 - `pre-commit` pour les hooks git
+
+## Tests
+
+```bash
+uv run pytest
+```
+
+## Hooks
+
+## Conteneurisation
