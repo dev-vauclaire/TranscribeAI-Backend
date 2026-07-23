@@ -1,43 +1,36 @@
-import os
+from collections.abc import Iterator
 from uuid import uuid4
 
 import pytest
-import redis
+from testcontainers.redis import RedisContainer
 
 from transcribe_ai_shared.services.redis_queue_service import RedisQueueService
 
 
-TEST_REDIS_URL_ENV = "TEST_REDIS_URL"
+REDIS_PORT = 6379
+
+
+@pytest.fixture(scope="session")
+def redis_container() -> Iterator[RedisContainer]:
+    with RedisContainer("redis:7-alpine") as container:
+        yield container
+
+
+@pytest.fixture(scope="session")
+def redis_url(redis_container: RedisContainer) -> str:
+    host = redis_container.get_container_host_ip()
+    port = redis_container.get_exposed_port(REDIS_PORT)
+
+    return f"redis://{host}:{port}/0"
 
 
 @pytest.fixture
-def redis_queue_service():
-    redis_url = os.getenv(TEST_REDIS_URL_ENV)
-    if not redis_url:
-        pytest.fail(
-            f"{TEST_REDIS_URL_ENV} must contain the URL of a dedicated "
-            "Redis test instance"
-        )
-
-    queue_name = f"transcribe_ai_test_{uuid4().hex}"
-    cleanup_client = redis.Redis.from_url(redis_url, decode_responses=True)
-
-    try:
-        cleanup_client.ping()
-    except redis.RedisError as error:
-        cleanup_client.close()
-        pytest.fail(f"Cannot connect to {TEST_REDIS_URL_ENV}: {error}")
-
-    service = RedisQueueService(
-        redis_url,
-        queue_name,
-        pop_timeout_seconds=0.1,
-        socket_timeout_seconds=1.0,
-    )
+def redis_queue_service(redis_url: str) -> Iterator[RedisQueueService]:
+    queue_name = f"test:jobs:{uuid4().hex}"
+    service = RedisQueueService(redis_url, queue_name)
 
     try:
         yield service
     finally:
-        cleanup_client.delete(queue_name)
+        service.redis.delete(queue_name)
         service.redis.close()
-        cleanup_client.close()
