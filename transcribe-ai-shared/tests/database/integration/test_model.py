@@ -9,10 +9,10 @@ from transcribe_ai_shared.database.models.job_model import Job, JobStatus, JobTy
 pytestmark = pytest.mark.integration
 
 
-def test_postgresql_schema_contains_expected_native_types(db_engine):
+def test_postgresql_schema_contains_expected_native_types(setup_db):
     columns = {
         column["name"]: column
-        for column in inspect(db_engine).get_columns(Job.__tablename__)
+        for column in inspect(setup_db).get_columns(Job.__tablename__)
     }
 
     assert isinstance(columns["uuid"]["type"], UUID)
