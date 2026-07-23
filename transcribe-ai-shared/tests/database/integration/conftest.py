@@ -14,29 +14,27 @@ from transcribe_ai_shared.database.session import (
     create_session_factory,
 )
 
-postgres = PostgresContainer("postgres:16-alpine")
+
+@pytest.fixture(scope="session")
+def postgres_container() -> Iterator[PostgresContainer]:
+    with PostgresContainer("postgres:16-alpine") as container:
+        yield container
 
 
 @pytest.fixture(scope="session")
-def setup_postgres(request):
-    postgres.start()
-
-    def cleanup():
-        postgres.stop()
-
-    request.addfinalizer(cleanup)
-    return postgres.get_connection_url()
+def postgres_url(postgres_container: PostgresContainer) -> str:
+    return postgres_container.get_connection_url()
 
 
 @pytest.fixture(scope="session")
-def setup_db(request, setup_postgres):
+def setup_db(request, postgres_url):
 
     def cleanup():
         Base.metadata.drop_all(engine)
         engine.dispose()
 
     request.addfinalizer(cleanup)
-    engine = create_db_engine(DatabaseConfig(url=setup_postgres))
+    engine = create_db_engine(DatabaseConfig(url=postgres_url))
     Base.metadata.create_all(bind=engine)
     return engine
 
