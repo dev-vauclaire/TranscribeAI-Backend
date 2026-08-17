@@ -1,8 +1,10 @@
 [tool.uv.workspace]
 members = [
-    "apps/transcribe-ai-api",
-    "apps/mono-voice-worker",
-    "apps/multi-voice-worker",
+    "apps/api",
+    "apps/dispatcher",
+    "apps/migration",
+    "apps/worker-batch",
+    "apps/worker-fast",
     "transcribe-ai-shared",
 ]
 
@@ -10,10 +12,12 @@ members = [
 dev = [
     "pre-commit>=4,<5",
     "pytest>=8,<10",
-    "testcontainers[postgres,redis]>=4.14.2",
+    "ruff>=0.15.21,<0.16",
+    "testcontainers[postgres,redis]>=4.14.2,<5",
 ]
 
 [tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
 testpaths = [
     "apps/*/tests",
     "transcribe-ai-shared/tests",
@@ -22,3 +26,6 @@ markers = [
     "unit: isolated tests without external services or I/O boundaries",
     "integration: tests involving several components or an I/O boundary",
 ]
+
+[tool.ruff]
+target-version = "py312"

@@ -1,19 +1,21 @@
 [project]
-name = "transcribe-ai-shared"
+name = "api"
 version = "0.1.0"
-description = "Package partagé pour les applications backend de Transcribe AI"
+description = "API REST pour l'application Transcribe AI"
 readme = "README.md"
 authors = [
     { name = "dev-vauclaire", email = "dev@ch-vauclaire.fr" }
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "psycopg2>=2.9.12",
-    "pydantic>=2.13.4",
-    "pydantic-settings>=2.14.2",
-    "redis>=8.0.1",
-    "sqlalchemy>=2.0.51",
+    "transcribe-ai-shared",
 ]
+
+[tool.uv.sources]
+transcribe-ai-shared = { workspace = true }
+
+[project.scripts]
+api = "api.main:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

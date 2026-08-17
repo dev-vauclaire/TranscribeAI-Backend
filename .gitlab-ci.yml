@@ -1,0 +1,36 @@
+stages:
+  - install
+  - lint
+  - unit-tests
+
+variables:
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
+  UV_LINK_MODE: copy
+
+default:
+  image: ghcr.io/astral-sh/uv:0.12.5-python3.12-trixie
+  cache:
+    key:
+      files:
+        - uv.lock
+    paths:
+      - .uv-cache/
+
+install:
+  stage: install
+  script:
+    - uv lock --check
+    - uv sync --locked --all-packages --all-groups
+
+lint:
+  stage: lint
+  script:
+    - uv sync --locked --all-packages --all-groups
+    - uv run --locked --no-sync ruff check .
+    - uv run --locked --no-sync ruff format --check .
+
+unit-tests:
+  stage: unit-tests
+  script:
+    - uv sync --locked --all-packages --all-groups
+    - uv run --locked --no-sync pytest -m unit

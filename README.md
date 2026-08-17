@@ -20,12 +20,14 @@ suivant 2 modes : Mono-voice et Multi-voice (diarization).
 
 ### Architecture du projet et conventions
 
-Il se compose de 3 applications et d'un package partagé entre elles.
+Il se compose de cinq applications et d'un package partagé entre elles.
 
-- [API](apps/transcribe-ai-api/README.md)
-- [Worker mono voice](apps/transcribe-ai-worker/README.md)
-- [Worker multi voice](apps/multi-voice-worker/README.md)
-- [Shared](apps/transcribe-ai-shared/README.md)
+- [API](apps/api/README.md)
+- [Dispatcher](apps/dispatcher/README.md)
+- [Migration](apps/migration/README.md)
+- [Worker fast](apps/worker-fast/README.md)
+- [Worker batch](apps/worker-batch/README.md)
+- [Shared](transcribe-ai-shared/README.md)
 
 ### Stack technique
 
