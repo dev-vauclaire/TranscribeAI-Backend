@@ -41,7 +41,11 @@ def configure_repository(monkeypatch, job):
     repository = Mock()
     repository.get_by_uuid.return_value = job
     repository_class = Mock(return_value=repository)
-    monkeypatch.setattr(worker_module, "JobRepository", repository_class)
+    monkeypatch.setattr(
+        worker_module,
+        "TranscriptionJobRepository",
+        repository_class,
+    )
 
     @contextmanager
     def fake_transaction(_session_factory):
@@ -84,7 +88,7 @@ def test_run_once_ignores_invalid_job_uuid(monkeypatch, worker_dependencies):
 
 def test_run_once_completes_job_and_deletes_audio(monkeypatch, worker_dependencies):
     job_uuid = uuid4()
-    job = SimpleNamespace(id=42, uuid=job_uuid, filename="job.wav")
+    job = SimpleNamespace(job_uuid=job_uuid, audio_uri="job.wav")
     repository, transaction = configure_repository(monkeypatch, job)
     worker_dependencies.redis_queue_service.pop_job.return_value = str(job_uuid)
     worker_dependencies.audio_storage_service.open_audio.return_value = BytesIO(
@@ -104,7 +108,7 @@ def test_run_once_completes_job_and_deletes_audio(monkeypatch, worker_dependenci
     assert result.error_message is None
     assert transaction.call_count == 2
     repository.get_by_uuid.assert_called_once_with(job_uuid)
-    repository.update_status.assert_called_once_with(42, JobStatus.PROCESSING)
+    repository.update_status.assert_called_once_with(job_uuid, JobStatus.PROCESSING)
     worker_dependencies.audio_storage_service.open_audio.assert_called_once_with(
         "job.wav"
     )
@@ -113,7 +117,7 @@ def test_run_once_completes_job_and_deletes_audio(monkeypatch, worker_dependenci
         filename="job.wav",
     )
     repository.complete_job.assert_called_once_with(
-        42,
+        job_uuid,
         result_data={
             "full_text": "Bonjour",
             "segments": [
@@ -146,7 +150,7 @@ def test_run_once_does_not_fail_unknown_job(monkeypatch, worker_dependencies):
 
 def test_run_once_marks_missing_audio_as_failed(monkeypatch, worker_dependencies):
     job_uuid = uuid4()
-    job = SimpleNamespace(id=42, uuid=job_uuid, filename="missing.wav")
+    job = SimpleNamespace(job_uuid=job_uuid, audio_uri="missing.wav")
     repository, transaction = configure_repository(monkeypatch, job)
     worker_dependencies.redis_queue_service.pop_job.return_value = str(job_uuid)
     worker_dependencies.audio_storage_service.open_audio.side_effect = (
@@ -159,11 +163,11 @@ def test_run_once_marks_missing_audio_as_failed(monkeypatch, worker_dependencies
     assert result.job_uuid == job_uuid
     assert result.error_message == "missing.wav"
     assert transaction.call_count == 2
-    repository.update_status.assert_called_once_with(42, JobStatus.PROCESSING)
+    repository.update_status.assert_called_once_with(job_uuid, JobStatus.PROCESSING)
     repository.fail_job.assert_called_once_with(
-        42,
-        error_msg="missing.wav",
-        ended_at=ANY,
+        job_uuid,
+        error_message="missing.wav",
+        completed_at=ANY,
     )
     worker_dependencies.whisper_client.send_to_whisper_service.assert_not_called()
     worker_dependencies.audio_storage_service.delete_audio.assert_called_once_with(
@@ -173,7 +177,7 @@ def test_run_once_marks_missing_audio_as_failed(monkeypatch, worker_dependencies
 
 def test_run_once_marks_whisper_error_as_failed(monkeypatch, worker_dependencies):
     job_uuid = uuid4()
-    job = SimpleNamespace(id=42, uuid=job_uuid, filename="job.wav")
+    job = SimpleNamespace(job_uuid=job_uuid, audio_uri="job.wav")
     repository, transaction = configure_repository(monkeypatch, job)
     worker_dependencies.redis_queue_service.pop_job.return_value = str(job_uuid)
     worker_dependencies.audio_storage_service.open_audio.return_value = BytesIO(
@@ -191,13 +195,13 @@ def test_run_once_marks_whisper_error_as_failed(monkeypatch, worker_dependencies
     assert transaction.call_count == 2
     assert repository.method_calls[:2] == [
         call.get_by_uuid(job_uuid),
-        call.update_status(42, JobStatus.PROCESSING),
+        call.update_status(job_uuid, JobStatus.PROCESSING),
     ]
     repository.complete_job.assert_not_called()
     repository.fail_job.assert_called_once_with(
-        42,
-        error_msg="La transcription Whisper a échoué",
-        ended_at=ANY,
+        job_uuid,
+        error_message="La transcription Whisper a échoué",
+        completed_at=ANY,
     )
     worker_dependencies.audio_storage_service.delete_audio.assert_called_once_with(
         "job.wav"

@@ -13,6 +13,20 @@ Ce package fournit les composants communs aux applications du backend.
 Les éléments supportés sont réexportés depuis `transcribe_ai_shared` et depuis le
 sous-package auquel ils appartiennent.
 
+## Modèles de transcription
+
+Le package expose trois modèles SQLAlchemy :
+
+- `TranscriptionJob` porte le cycle de vie, les tentatives et le lease du job ;
+- `OutboxEvent` référence un job et permet sa publication transactionnelle ;
+- `TranscriptionResult` contient l'unique résultat JSONB associé à un job et une
+  note textuelle optionnelle.
+
+Les clés sont des UUID natifs PostgreSQL. Les relations enfant utilisent des
+clés étrangères `RESTRICT` : un job référencé par un événement ou un résultat
+ne peut pas être supprimé. Les schémas Pydantic associés sont configurés pour
+valider directement les instances SQLAlchemy.
+
 ## Configuration
 
 Les configurations héritent de `pydantic-settings.BaseSettings`. Elles lisent

@@ -10,7 +10,10 @@ uv run pytest transcribe-ai-shared/tests/database/unit
 
 ## Integration tests
 
-Lancer les tests d'intégrations :
+Les tests d'intégration nécessitent un moteur Docker accessible. Testcontainers
+démarre et arrête automatiquement une instance PostgreSQL 16 dédiée.
+
+Lancer les tests d'intégration :
 
 ```bash
 uv run pytest transcribe-ai-shared/tests/database/integration

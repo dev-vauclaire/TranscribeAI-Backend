@@ -11,11 +11,11 @@ from worker_fast.client_whisper import (
 )
 from transcribe_ai_shared import (
     AudioStorageService,
-    WrongAudioPathError,
-    JobRepository,
     JobStatus,
     RedisQueueService,
     SessionFactory,
+    TranscriptionJobRepository,
+    WrongAudioPathError,
     transaction,
 )
 
@@ -56,8 +56,8 @@ class WorkerMonoVoice:
         self.whisper_client = client_whisper
 
     def run_once(self) -> WorkerPayload:
-        job_id: int | None = None
-        job_filename: str | None = None
+        job_audio_uri: str | None = None
+        job_found = False
         job_uuid: UUID | None = None
 
         worker_payload = WorkerPayload()
@@ -84,7 +84,7 @@ class WorkerMonoVoice:
             logging.info(f"Traitement du job {job_uuid}...")
 
             with transaction(self.session_factory) as session:
-                repository = JobRepository(session)
+                repository = TranscriptionJobRepository(session)
                 job = repository.get_by_uuid(job_uuid)
 
                 if job is None:
@@ -94,23 +94,22 @@ class WorkerMonoVoice:
                     )
                     raise JobNotFoundError(f"Le job {job_uuid} n'existe pas")
 
-                repository.update_status(job.id, JobStatus.PROCESSING)
+                job_found = True
+                repository.update_status(job_uuid, JobStatus.PROCESSING)
+                job_audio_uri = job.audio_uri
 
-                job_id = job.id
-                job_filename = job.filename
-
-            with self.audio_storage_service.open_audio(job_filename) as audio_file:
+            with self.audio_storage_service.open_audio(job_audio_uri) as audio_file:
                 whisper_payload: WhisperPayload = (
                     self.whisper_client.send_to_whisper_service(
                         audio_file,
-                        filename=job_filename,
+                        filename=job_audio_uri,
                     )
                 )
 
             with transaction(self.session_factory) as session:
-                repository = JobRepository(session)
+                repository = TranscriptionJobRepository(session)
                 repository.complete_job(
-                    job_id,
+                    job_uuid,
                     result_data=whisper_payload.model_dump(mode="json"),
                 )
 
@@ -122,13 +121,13 @@ class WorkerMonoVoice:
             WrongAudioPathError,
             WhisperClientError,
         ) as error:
-            if job_id is not None:
+            if job_found and job_uuid is not None:
                 with transaction(self.session_factory) as session:
-                    repository = JobRepository(session)
+                    repository = TranscriptionJobRepository(session)
                     repository.fail_job(
-                        job_id,
-                        error_msg=str(error),
-                        ended_at=datetime.now(ZoneInfo("Europe/Paris")),
+                        job_uuid,
+                        error_message=str(error),
+                        completed_at=datetime.now(ZoneInfo("Europe/Paris")),
                     )
             worker_payload.status = (
                 WorkerPayloadStatus.JOB_NOT_FOUND
@@ -138,7 +137,7 @@ class WorkerMonoVoice:
             worker_payload.error_message = str(error)
 
         finally:
-            if job_filename is not None:
-                self.audio_storage_service.delete_audio(job_filename)
+            if job_audio_uri is not None:
+                self.audio_storage_service.delete_audio(job_audio_uri)
 
         return worker_payload
