@@ -7,18 +7,16 @@ fichier réel :
 uv run pytest -m unit transcribe-ai-shared/tests
 ```
 
-Les tests d'intégration utilisent un dossier temporaire réel, PostgreSQL et
-Redis. Les URL doivent pointer vers des instances dédiées aux tests :
+Les tests d'intégration utilisent un dossier temporaire réel ainsi que des
+conteneurs PostgreSQL et Redis éphémères. Ils nécessitent un moteur Docker
+local accessible par Testcontainers.
 
 Pour lancer les tests d'intégration, placez vous à la racine du projet
 et exécutez les commandes suivantes :
 
 ```shell
-export TEST_DATABASE_URL="postgresql+psycopg2://postgres:postgres@localhost:5432/postgres"
-export TEST_REDIS_URL="redis://localhost:6379/15"
-docker compose -f transcribe-ai-shared/tests/docker-compose.yml up -d
 uv run pytest -m integration transcribe-ai-shared/tests
 ```
 
-La suite PostgreSQL crée puis supprime un schéma unique. La suite Redis crée
-puis supprime uniquement des files aux noms uniques.
+Les conteneurs sont démarrés et arrêtés par les fixtures de session. La suite
+Redis crée en plus une file unique par test et la supprime après utilisation.

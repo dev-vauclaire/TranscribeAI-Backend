@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -11,26 +12,46 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def bootstrap_dependencies(monkeypatch):
-    settings = SimpleNamespace(
-        pg_dsn="postgresql+psycopg2://user:password@database/transcribe",
-        redis_dsn="redis://redis:6379/0",
-        redis_queue_name_mono_voice="mono-jobs",
+    database_settings = SimpleNamespace()
+    redis_settings = SimpleNamespace(redis_url="redis://redis:6379/0")
+    storage_settings = SimpleNamespace(
+        audio_storage_path=Path("/tmp/transcribe-ai-audio")
+    )
+    worker_settings = SimpleNamespace(
+        worker_id="worker-fast-test",
+        worker_lease_seconds=300,
+        max_attempts=3,
         whisper_service_url="http://whisper:5002",
-        audio_folder_path="/tmp/transcribe-ai-audio",
+        redis_queue_name_mono_voice="mono-jobs",
         worker_loop_sleep_time=3,
     )
     engine = Mock()
     session_factory = Mock()
     redis_queue_service = Mock()
     whisper_client = Mock()
-    audio_manager = Mock()
+    audio_storage_service = Mock()
     worker = Mock()
     sleep = Mock(side_effect=KeyboardInterrupt)
 
     monkeypatch.setattr(
         main_module,
+        "DatabaseSettings",
+        Mock(return_value=database_settings),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "RedisSettings",
+        Mock(return_value=redis_settings),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "StorageSettings",
+        Mock(return_value=storage_settings),
+    )
+    monkeypatch.setattr(
+        main_module,
         "WorkerMonoVoiceSettings",
-        Mock(return_value=settings),
+        Mock(return_value=worker_settings),
     )
     create_db_engine = Mock(return_value=engine)
     monkeypatch.setattr(main_module, "create_db_engine", create_db_engine)
@@ -44,27 +65,34 @@ def bootstrap_dependencies(monkeypatch):
     monkeypatch.setattr(main_module, "RedisQueueService", redis_service_class)
     whisper_client_class = Mock(return_value=whisper_client)
     monkeypatch.setattr(main_module, "ClientWhisper", whisper_client_class)
-    audio_manager_class = Mock(return_value=audio_manager)
-    monkeypatch.setattr(main_module, "AudioManager", audio_manager_class)
+    audio_storage_service_class = Mock(return_value=audio_storage_service)
+    monkeypatch.setattr(
+        main_module,
+        "AudioStorageService",
+        audio_storage_service_class,
+    )
     worker_class = Mock(return_value=worker)
     monkeypatch.setattr(main_module, "WorkerMonoVoice", worker_class)
     monkeypatch.setattr(main_module.time, "sleep", sleep)
 
     return SimpleNamespace(
-        audio_manager=audio_manager,
-        audio_manager_class=audio_manager_class,
+        audio_storage_service=audio_storage_service,
+        audio_storage_service_class=audio_storage_service_class,
         create_db_engine=create_db_engine,
         create_session_factory=create_session_factory,
+        database_settings=database_settings,
         engine=engine,
         redis_queue_service=redis_queue_service,
         redis_service_class=redis_service_class,
+        redis_settings=redis_settings,
         session_factory=session_factory,
-        settings=settings,
         sleep=sleep,
+        storage_settings=storage_settings,
         whisper_client=whisper_client,
         whisper_client_class=whisper_client_class,
         worker=worker,
         worker_class=worker_class,
+        worker_settings=worker_settings,
     )
 
 
@@ -78,21 +106,29 @@ def test_main_checks_dependencies_before_starting_worker(
         "check_postgres_connection",
         check_postgres_connection,
     )
+
     main_module.main()
 
+    bootstrap_dependencies.create_db_engine.assert_called_once_with(
+        bootstrap_dependencies.database_settings
+    )
     check_postgres_connection.assert_called_once_with(
         bootstrap_dependencies.session_factory
     )
+    bootstrap_dependencies.redis_service_class.assert_called_once_with(
+        str(bootstrap_dependencies.redis_settings.redis_url),
+        bootstrap_dependencies.worker_settings.redis_queue_name_mono_voice,
+    )
     bootstrap_dependencies.redis_queue_service.check_redis_connection.assert_called_once_with()
     bootstrap_dependencies.whisper_client.check_whisper_connection.assert_called_once_with()
-    bootstrap_dependencies.audio_manager_class.assert_called_once_with(
-        bootstrap_dependencies.settings.audio_folder_path
+    bootstrap_dependencies.audio_storage_service_class.assert_called_once_with(
+        bootstrap_dependencies.storage_settings.audio_storage_path
     )
     bootstrap_dependencies.worker_class.assert_called_once_with(
         session_factory=bootstrap_dependencies.session_factory,
         redis_queue_service=bootstrap_dependencies.redis_queue_service,
         client_whisper=bootstrap_dependencies.whisper_client,
-        audio_manager=bootstrap_dependencies.audio_manager,
+        audio_storage_service=bootstrap_dependencies.audio_storage_service,
     )
     bootstrap_dependencies.worker.run_once.assert_called_once_with()
     bootstrap_dependencies.sleep.assert_called_once_with(3)

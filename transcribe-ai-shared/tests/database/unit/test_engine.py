@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import pytest
 
 from transcribe_ai_shared.database import engine as engine_module
-from transcribe_ai_shared.database.config import DatabaseConfig
+from transcribe_ai_shared.database.config import DatabaseSettings
 
 
 pytestmark = pytest.mark.unit
@@ -13,7 +13,7 @@ def test_create_db_engine_forwards_configuration(monkeypatch):
     expected_engine = Mock()
     create_engine = Mock(return_value=expected_engine)
     monkeypatch.setattr(engine_module, "create_engine", create_engine)
-    config = DatabaseConfig(
+    settings = DatabaseSettings(
         url="postgresql://user:secret@db/transcribe_test",
         echo=True,
         pool_size=5,
@@ -21,11 +21,11 @@ def test_create_db_engine_forwards_configuration(monkeypatch):
         pool_timeout_seconds=12.5,
     )
 
-    result = engine_module.create_db_engine(config)
+    result = engine_module.create_db_engine(settings)
 
     assert result is expected_engine
     create_engine.assert_called_once_with(
-        config.url,
+        str(settings.url),
         echo=True,
         pool_pre_ping=True,
         pool_size=5,

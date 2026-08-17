@@ -1,8 +1,11 @@
 import redis
 
+from transcribe_ai_shared.queue.exceptions import RedisConnectionError
 
-# Service pour gérer une file Redis simple (FIFO)
+
 class RedisQueueService:
+    """File FIFO Redis utilisée pour publier et consommer des jobs."""
+
     def __init__(
         self,
         redis_url: str,
@@ -36,14 +39,12 @@ class RedisQueueService:
         try:
             self.redis.ping()
         except redis.RedisError as error:
-            raise ConnectionError("Impossible de se connecter à Redis") from error
+            raise RedisConnectionError("Impossible de se connecter à Redis") from error
 
-    # Enfile un job_id
     def push_job(self, job_uuid: str) -> str:
         self.redis.rpush(self.queue_name, job_uuid)
         return job_uuid
 
-    # Attend un job pendant une durée bornée
     def pop_job(self) -> str | None:
         result = self.redis.blpop(
             self.queue_name,
@@ -56,12 +57,8 @@ class RedisQueueService:
         return job_uuid
 
     def get_queue_position(self, job_uuid: str) -> int | None:
-        """
-        Retourne la position (1-based) de l'élément dans la liste Redis.
-        Retourne None si l'élément n'est pas dans la liste.
-        """
-        # lpos retourne l'index (0-based) de l'élément
+        """Return the one-based position of a job, or ``None`` when absent."""
         index = self.redis.execute_command("LPOS", self.queue_name, job_uuid)
-        if index is not None:
-            return index + 1
-        return None
+        if index is None:
+            return None
+        return index + 1

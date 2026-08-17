@@ -1,9 +1,8 @@
 """Shared components used by the Transcribe AI backend applications."""
 
-from transcribe_ai_shared.base_settings import TranscribeAiBaseSettings
 from transcribe_ai_shared.database import (
     Base,
-    DatabaseConfig,
+    DatabaseSettings,
     Job,
     JobRepository,
     JobStatus,
@@ -14,24 +13,35 @@ from transcribe_ai_shared.database import (
     create_session_factory,
     transaction,
 )
-from transcribe_ai_shared.services import (
-    AudioManager,
+from transcribe_ai_shared.queue import (
+    RedisConnectionError,
     RedisQueueService,
+    RedisSettings,
+)
+from transcribe_ai_shared.storage import (
+    AudioStorageService,
+    StorageSettings,
+    UploadedAudio,
     WrongAudioPathError,
 )
+from transcribe_ai_shared.worker import WorkerSettings
 
 __all__ = [
-    "AudioManager",
+    "AudioStorageService",
     "Base",
-    "DatabaseConfig",
+    "DatabaseSettings",
     "Job",
-    "WrongAudioPathError",
     "JobRepository",
     "JobStatus",
     "JobType",
+    "RedisConnectionError",
     "RedisQueueService",
+    "RedisSettings",
     "SessionFactory",
-    "TranscribeAiBaseSettings",
+    "StorageSettings",
+    "UploadedAudio",
+    "WorkerSettings",
+    "WrongAudioPathError",
     "check_postgres_connection",
     "create_db_engine",
     "create_session_factory",

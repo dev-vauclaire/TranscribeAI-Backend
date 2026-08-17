@@ -17,19 +17,19 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def worker_dependencies():
-    audio_manager = Mock()
+    audio_storage_service = Mock()
     session_factory = Mock()
     redis_queue_service = Mock()
     whisper_client = Mock()
     worker = WorkerMonoVoice(
-        audio_manager=audio_manager,
+        audio_storage_service=audio_storage_service,
         session_factory=session_factory,
         redis_queue_service=redis_queue_service,
         client_whisper=whisper_client,
     )
 
     return SimpleNamespace(
-        audio_manager=audio_manager,
+        audio_storage_service=audio_storage_service,
         redis_queue_service=redis_queue_service,
         session_factory=session_factory,
         whisper_client=whisper_client,
@@ -62,8 +62,8 @@ def test_run_once_has_no_side_effect_when_queue_is_empty(worker_dependencies):
     assert result.error_message is None
     worker_dependencies.session_factory.assert_not_called()
     worker_dependencies.whisper_client.send_to_whisper_service.assert_not_called()
-    worker_dependencies.audio_manager.open_audio.assert_not_called()
-    worker_dependencies.audio_manager.delete_audio.assert_not_called()
+    worker_dependencies.audio_storage_service.open_audio.assert_not_called()
+    worker_dependencies.audio_storage_service.delete_audio.assert_not_called()
 
 
 def test_run_once_ignores_invalid_job_uuid(monkeypatch, worker_dependencies):
@@ -77,9 +77,9 @@ def test_run_once_ignores_invalid_job_uuid(monkeypatch, worker_dependencies):
     assert result.job_uuid is None
     assert result.error_message == "Identifiant de job invalide"
     transaction.assert_not_called()
-    worker_dependencies.audio_manager.open_audio.assert_not_called()
+    worker_dependencies.audio_storage_service.open_audio.assert_not_called()
     worker_dependencies.whisper_client.send_to_whisper_service.assert_not_called()
-    worker_dependencies.audio_manager.delete_audio.assert_not_called()
+    worker_dependencies.audio_storage_service.delete_audio.assert_not_called()
 
 
 def test_run_once_completes_job_and_deletes_audio(monkeypatch, worker_dependencies):
@@ -87,7 +87,9 @@ def test_run_once_completes_job_and_deletes_audio(monkeypatch, worker_dependenci
     job = SimpleNamespace(id=42, uuid=job_uuid, filename="job.wav")
     repository, transaction = configure_repository(monkeypatch, job)
     worker_dependencies.redis_queue_service.pop_job.return_value = str(job_uuid)
-    worker_dependencies.audio_manager.open_audio.return_value = BytesIO(b"audio")
+    worker_dependencies.audio_storage_service.open_audio.return_value = BytesIO(
+        b"audio"
+    )
     payload = WhisperPayload(
         full_text="Bonjour",
         segments=[{"id": 0, "start": 0.0, "end": 1.0, "text": "Bonjour"}],
@@ -103,7 +105,9 @@ def test_run_once_completes_job_and_deletes_audio(monkeypatch, worker_dependenci
     assert transaction.call_count == 2
     repository.get_by_uuid.assert_called_once_with(job_uuid)
     repository.update_status.assert_called_once_with(42, JobStatus.PROCESSING)
-    worker_dependencies.audio_manager.open_audio.assert_called_once_with("job.wav")
+    worker_dependencies.audio_storage_service.open_audio.assert_called_once_with(
+        "job.wav"
+    )
     worker_dependencies.whisper_client.send_to_whisper_service.assert_called_once_with(
         ANY,
         filename="job.wav",
@@ -118,7 +122,9 @@ def test_run_once_completes_job_and_deletes_audio(monkeypatch, worker_dependenci
             "language": "fr",
         },
     )
-    worker_dependencies.audio_manager.delete_audio.assert_called_once_with("job.wav")
+    worker_dependencies.audio_storage_service.delete_audio.assert_called_once_with(
+        "job.wav"
+    )
 
 
 def test_run_once_does_not_fail_unknown_job(monkeypatch, worker_dependencies):
@@ -134,8 +140,8 @@ def test_run_once_does_not_fail_unknown_job(monkeypatch, worker_dependencies):
     transaction.assert_called_once_with(worker_dependencies.session_factory)
     repository.get_by_uuid.assert_called_once_with(job_uuid)
     repository.fail_job.assert_not_called()
-    worker_dependencies.audio_manager.open_audio.assert_not_called()
-    worker_dependencies.audio_manager.delete_audio.assert_not_called()
+    worker_dependencies.audio_storage_service.open_audio.assert_not_called()
+    worker_dependencies.audio_storage_service.delete_audio.assert_not_called()
 
 
 def test_run_once_marks_missing_audio_as_failed(monkeypatch, worker_dependencies):
@@ -143,8 +149,8 @@ def test_run_once_marks_missing_audio_as_failed(monkeypatch, worker_dependencies
     job = SimpleNamespace(id=42, uuid=job_uuid, filename="missing.wav")
     repository, transaction = configure_repository(monkeypatch, job)
     worker_dependencies.redis_queue_service.pop_job.return_value = str(job_uuid)
-    worker_dependencies.audio_manager.open_audio.side_effect = FileNotFoundError(
-        "missing.wav"
+    worker_dependencies.audio_storage_service.open_audio.side_effect = (
+        FileNotFoundError("missing.wav")
     )
 
     result = worker_dependencies.worker.run_once()
@@ -160,7 +166,7 @@ def test_run_once_marks_missing_audio_as_failed(monkeypatch, worker_dependencies
         ended_at=ANY,
     )
     worker_dependencies.whisper_client.send_to_whisper_service.assert_not_called()
-    worker_dependencies.audio_manager.delete_audio.assert_called_once_with(
+    worker_dependencies.audio_storage_service.delete_audio.assert_called_once_with(
         "missing.wav"
     )
 
@@ -170,7 +176,9 @@ def test_run_once_marks_whisper_error_as_failed(monkeypatch, worker_dependencies
     job = SimpleNamespace(id=42, uuid=job_uuid, filename="job.wav")
     repository, transaction = configure_repository(monkeypatch, job)
     worker_dependencies.redis_queue_service.pop_job.return_value = str(job_uuid)
-    worker_dependencies.audio_manager.open_audio.return_value = BytesIO(b"audio")
+    worker_dependencies.audio_storage_service.open_audio.return_value = BytesIO(
+        b"audio"
+    )
     worker_dependencies.whisper_client.send_to_whisper_service.side_effect = (
         WhisperClientError("La transcription Whisper a échoué")
     )
@@ -191,4 +199,6 @@ def test_run_once_marks_whisper_error_as_failed(monkeypatch, worker_dependencies
         error_msg="La transcription Whisper a échoué",
         ended_at=ANY,
     )
-    worker_dependencies.audio_manager.delete_audio.assert_called_once_with("job.wav")
+    worker_dependencies.audio_storage_service.delete_audio.assert_called_once_with(
+        "job.wav"
+    )

@@ -1,33 +1,38 @@
 # Transcribe AI Shared
 
-Ce package contient les composants partagés par les applications backend.
-Elle est composée :
+Ce package fournit les composants communs aux applications du backend.
 
-* [`AudioManager`](#audiomanager)
-* [`RedisQueueService`](#redisqueueservice)
-* [`TranscribeAiBaseSettings`](#transcribeaibasesettings)
-* [`Database`](#database)
+## Structure
 
-## AudioManager
+- `database` : configuration PostgreSQL, moteur, sessions, modèles et
+  repositories ;
+- `queue` : configuration Redis, file de jobs et exceptions associées ;
+- `storage` : configuration et stockage local des fichiers audio ;
+- `worker` : configuration commune aux processus workers.
 
-Classe python travaillant dans un repertoire et effectue
-des opérations basiques comme la suppression, la
- sauvegarde et la lecture de fichier.
+Les éléments supportés sont réexportés depuis `transcribe_ai_shared` et depuis le
+sous-package auquel ils appartiennent.
 
-## RedisQueueService
+## Configuration
 
-Classe python travaillant avec une queue redis.
-Elle permet de publier et de consommer des messages.
+Les configurations héritent de `pydantic-settings.BaseSettings`. Elles lisent
+les variables d'environnement suivantes :
 
-## TranscribeAiBaseSettings
+| Classe | Variable | Obligatoire | Défaut |
+| --- | --- | --- | --- |
+| `DatabaseSettings` | `DATABASE_URL` | oui | — |
+| `RedisSettings` | `REDIS_URL` | oui | — |
+| `StorageSettings` | `AUDIO_STORAGE_PATH` | non | `tmp/audios_buffers` |
+| `WorkerSettings` | `WORKER_ID` | oui | — |
+| `WorkerSettings` | `WORKER_LEASE_SECONDS` | non | `300` |
+| `WorkerSettings` | `MAX_ATTEMPTS` | non | `3` |
 
-Classe python contenant les paramètres communs à toutes les applications backend.
-Elle est utilisée avec Pydantic pour la validation des paramètres.
+Le package ne charge pas implicitement de fichier `.env` : le point d'entrée de
+chaque application reste responsable de fournir son environnement.
 
-## Database
+## Services
 
-Folder contenant les utilitaires suivants :
-
-* Les models
-* Les fonctions de manipulation des tables
-* Les fonctions de connexion, déconnexion et génération de session
+- `RedisQueueService` publie et consomme les identifiants de jobs dans une file
+  FIFO Redis.
+- `AudioStorageService` sauvegarde, ouvre et supprime des fichiers audio dans un
+  dossier confiné.

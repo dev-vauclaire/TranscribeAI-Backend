@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import pytest
 import redis
 
-from transcribe_ai_shared.services.redis_queue_service import RedisQueueService
+from transcribe_ai_shared.queue import RedisConnectionError, RedisQueueService
 
 
 pytestmark = pytest.mark.unit
@@ -14,7 +14,7 @@ def redis_client(monkeypatch):
     client = Mock()
     from_url = Mock(return_value=client)
     monkeypatch.setattr(
-        "transcribe_ai_shared.services.redis_queue_service.redis.Redis.from_url",
+        "transcribe_ai_shared.queue.queue.redis.Redis.from_url",
         from_url,
     )
     return client, from_url
@@ -66,7 +66,7 @@ def test_healthcheck_translates_redis_error(redis_client):
     client.ping.side_effect = redis_error
     service = RedisQueueService("redis://localhost:6379/0", "jobs")
 
-    with pytest.raises(ConnectionError) as error:
+    with pytest.raises(RedisConnectionError) as error:
         service.check_redis_connection()
 
     assert error.value.__cause__ is redis_error

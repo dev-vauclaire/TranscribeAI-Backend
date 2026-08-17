@@ -10,7 +10,7 @@ from worker_fast.client_whisper import (
     WhisperPayload,
 )
 from transcribe_ai_shared import (
-    AudioManager,
+    AudioStorageService,
     WrongAudioPathError,
     JobRepository,
     JobStatus,
@@ -48,11 +48,11 @@ class WorkerMonoVoice:
         session_factory: SessionFactory,
         redis_queue_service: RedisQueueService,
         client_whisper: ClientWhisper,
-        audio_manager: AudioManager,
+        audio_storage_service: AudioStorageService,
     ) -> None:
         self.redis_queue_service = redis_queue_service
         self.session_factory = session_factory
-        self.audio_manager = audio_manager
+        self.audio_storage_service = audio_storage_service
         self.whisper_client = client_whisper
 
     def run_once(self) -> WorkerPayload:
@@ -99,7 +99,7 @@ class WorkerMonoVoice:
                 job_id = job.id
                 job_filename = job.filename
 
-            with self.audio_manager.open_audio(job_filename) as audio_file:
+            with self.audio_storage_service.open_audio(job_filename) as audio_file:
                 whisper_payload: WhisperPayload = (
                     self.whisper_client.send_to_whisper_service(
                         audio_file,
@@ -139,6 +139,6 @@ class WorkerMonoVoice:
 
         finally:
             if job_filename is not None:
-                self.audio_manager.delete_audio(job_filename)
+                self.audio_storage_service.delete_audio(job_filename)
 
         return worker_payload

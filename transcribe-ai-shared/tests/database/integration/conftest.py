@@ -6,7 +6,7 @@ from sqlalchemy import delete
 from testcontainers.postgres import PostgresContainer
 
 from transcribe_ai_shared.database.base import Base
-from transcribe_ai_shared.database.config import DatabaseConfig
+from transcribe_ai_shared.database.config import DatabaseSettings
 from transcribe_ai_shared.database.engine import create_db_engine
 from transcribe_ai_shared.database.models.job_model import Job
 from transcribe_ai_shared.database.session import (
@@ -34,7 +34,7 @@ def setup_db(request, postgres_url):
         engine.dispose()
 
     request.addfinalizer(cleanup)
-    engine = create_db_engine(DatabaseConfig(url=postgres_url))
+    engine = create_db_engine(DatabaseSettings(url=postgres_url))
     Base.metadata.create_all(bind=engine)
     return engine
 

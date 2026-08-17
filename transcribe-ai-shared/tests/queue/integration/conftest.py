@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from testcontainers.redis import RedisContainer
 
-from transcribe_ai_shared.services.redis_queue_service import RedisQueueService
+from transcribe_ai_shared.queue import RedisQueueService
 
 
 REDIS_PORT = 6379
