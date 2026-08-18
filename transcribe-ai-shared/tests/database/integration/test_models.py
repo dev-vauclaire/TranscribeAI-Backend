@@ -28,10 +28,11 @@ def make_job(**overrides) -> TranscriptionJob:
     return TranscriptionJob(**values)
 
 
-def test_postgresql_creates_only_target_transcription_tables(setup_db):
+def test_postgresql_contains_migrated_transcription_tables(setup_db):
     table_names = set(inspect(setup_db).get_table_names())
 
     assert table_names == {
+        "alembic_version",
         "transcription_jobs",
         "outbox_events",
         "transcription_results",

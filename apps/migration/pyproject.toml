@@ -8,8 +8,13 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.18.5,<2",
+    "sqlalchemy>=2.0.51,<3",
     "transcribe-ai-shared",
 ]
+
+[project.scripts]
+database-migrate = "migration.main:main"
 
 [tool.uv.sources]
 transcribe-ai-shared = { workspace = true }
