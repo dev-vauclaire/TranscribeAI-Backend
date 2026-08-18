@@ -15,17 +15,43 @@ sous-package auquel ils appartiennent.
 
 ## Modèles de transcription
 
-Le package expose trois modèles SQLAlchemy :
+Le package expose deux modèles SQLAlchemy :
 
-- `TranscriptionJob` porte le cycle de vie, les tentatives et le lease du job ;
-- `OutboxEvent` référence un job et permet sa publication transactionnelle ;
+- `TranscriptionJob` porte le cycle de vie, l'état de dispatch, les tentatives et
+  le lease du job ;
 - `TranscriptionResult` contient l'unique résultat JSONB associé à un job et une
   note textuelle optionnelle.
 
-Les clés sont des UUID natifs PostgreSQL. Les relations enfant utilisent des
-clés étrangères `RESTRICT` : un job référencé par un événement ou un résultat
-ne peut pas être supprimé. Les schémas Pydantic associés sont configurés pour
-valider directement les instances SQLAlchemy.
+Les clés sont des UUID natifs PostgreSQL. La relation résultat utilise une clé
+étrangère `RESTRICT` : un job référencé par un résultat ne peut pas être
+supprimé. Les schémas Pydantic associés sont configurés pour valider directement
+les instances SQLAlchemy.
+
+## Repositories et transactions
+
+`JobRepository` utilise une `AsyncSession` SQLAlchemy et ne réalise aucun
+commit. L'application délimite l'unité de travail avec `async_transaction` :
+
+```python
+engine = create_async_db_engine(DatabaseSettings())
+session_factory = create_async_session_factory(engine)
+
+async with async_transaction(session_factory) as session:
+    repository = JobRepository(session)
+    await repository.add(job)
+```
+
+Le moteur synchrone reste utilisé par Alembic et par le code historique en
+attente de migration.
+
+Le repository expose également la sélection des jobs en attente de dispatch et
+la confirmation d'une publication réussie. Cette confirmation reste dans la
+transaction de l'appelant : le dispatcher ne doit l'exécuter qu'après le succès
+de la publication Redis.
+
+Deux index PostgreSQL partiels ciblent les files de travail actives : les jobs
+`QUEUED` à dispatcher, ordonnés par création, et les jobs `PROCESSING` dont le
+lease doit être surveillé, ordonnés par expiration.
 
 ## Configuration
 

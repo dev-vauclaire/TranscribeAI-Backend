@@ -6,7 +6,7 @@ from transcribe_ai_shared.database import (
     JobStatus,
     JobType,
     TranscriptionJob,
-    TranscriptionJobRepository,
+    TranscriptionResult,
     check_postgres_connection,
     transaction,
 )
@@ -31,10 +31,10 @@ def test_transaction_commits_on_success(session_factory):
     job_uuid = uuid4()
 
     with transaction(session_factory) as session:
-        TranscriptionJobRepository(session).add(make_job(job_uuid))
+        session.add(make_job(job_uuid))
 
     with session_factory() as session:
-        job = TranscriptionJobRepository(session).get_by_uuid(job_uuid)
+        job = session.get(TranscriptionJob, job_uuid)
         assert job is not None
         assert job.audio_uri == "audio/job.wav"
 
@@ -44,45 +44,51 @@ def test_transaction_rolls_back_on_error(session_factory):
 
     with pytest.raises(RuntimeError, match="processing failed"):
         with transaction(session_factory) as session:
-            TranscriptionJobRepository(session).add(make_job(job_uuid))
+            session.add(make_job(job_uuid))
             raise RuntimeError("processing failed")
 
     with session_factory() as session:
-        assert TranscriptionJobRepository(session).get_by_uuid(job_uuid) is None
+        assert session.get(TranscriptionJob, job_uuid) is None
 
 
-def test_multiple_repository_operations_are_atomic(session_factory):
+def test_multiple_model_changes_are_atomic(session_factory):
     job_uuid = uuid4()
 
     with transaction(session_factory) as session:
-        repository = TranscriptionJobRepository(session)
-        repository.add(make_job(job_uuid))
-        repository.update_status(job_uuid, JobStatus.PROCESSING)
-        repository.complete_job(job_uuid, {"text": "Bonjour"})
+        job = make_job(job_uuid)
+        job.status = JobStatus.COMPLETED
+        session.add(job)
+        session.add(TranscriptionResult(job=job, result={"text": "Bonjour"}))
 
     with session_factory() as session:
-        saved = TranscriptionJobRepository(session).get_by_uuid(job_uuid)
+        saved = session.get(TranscriptionJob, job_uuid)
         assert saved is not None
         assert saved.status is JobStatus.COMPLETED
         assert saved.transcription_result is not None
         assert saved.transcription_result.result == {"text": "Bonjour"}
 
 
-def test_repository_changes_are_rolled_back_together(session_factory):
+def test_model_changes_are_rolled_back_together(session_factory):
     job_uuid = uuid4()
 
     with transaction(session_factory) as session:
-        TranscriptionJobRepository(session).add(make_job(job_uuid))
+        session.add(make_job(job_uuid))
 
     with pytest.raises(RuntimeError, match="processing failed"):
         with transaction(session_factory) as session:
-            repository = TranscriptionJobRepository(session)
-            repository.update_status(job_uuid, JobStatus.PROCESSING)
-            repository.complete_job(job_uuid, {"text": "Temporary result"})
+            job = session.get(TranscriptionJob, job_uuid)
+            assert job is not None
+            job.status = JobStatus.COMPLETED
+            session.add(
+                TranscriptionResult(
+                    job=job,
+                    result={"text": "Temporary result"},
+                )
+            )
             raise RuntimeError("processing failed")
 
     with session_factory() as session:
-        saved = TranscriptionJobRepository(session).get_by_uuid(job_uuid)
+        saved = session.get(TranscriptionJob, job_uuid)
         assert saved is not None
         assert saved.status is JobStatus.QUEUED
         assert saved.transcription_result is None

@@ -1,5 +1,3 @@
-from transcribe_ai_shared.database.repositories.transcription_job_repository import (
-    TranscriptionJobRepository,
-)
+from transcribe_ai_shared.database.repositories.job_repository import JobRepository
 
-__all__ = ["TranscriptionJobRepository"]
+__all__ = ["JobRepository"]

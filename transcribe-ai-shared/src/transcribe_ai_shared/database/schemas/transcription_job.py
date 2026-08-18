@@ -17,6 +17,8 @@ class TranscriptionJobSchema(BaseModel):
     status: JobStatus
     job_type: JobType
     audio_uri: NonEmptyString
+    dispatch_required: bool
+    last_dispatched_at: AwareDatetime | None = None
     created_at: AwareDatetime
     updated_at: AwareDatetime
     started_at: AwareDatetime | None = None

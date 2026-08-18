@@ -9,12 +9,14 @@ from worker_fast.client_whisper import (
     WhisperClientError,
     WhisperPayload,
 )
+from worker_fast.legacy_transcription_job_repository import (
+    LegacyTranscriptionJobRepository,
+)
 from transcribe_ai_shared import (
     AudioStorageService,
     JobStatus,
     RedisQueueService,
     SessionFactory,
-    TranscriptionJobRepository,
     WrongAudioPathError,
     transaction,
 )
@@ -84,7 +86,7 @@ class WorkerMonoVoice:
             logging.info(f"Traitement du job {job_uuid}...")
 
             with transaction(self.session_factory) as session:
-                repository = TranscriptionJobRepository(session)
+                repository = LegacyTranscriptionJobRepository(session)
                 job = repository.get_by_uuid(job_uuid)
 
                 if job is None:
@@ -107,7 +109,7 @@ class WorkerMonoVoice:
                 )
 
             with transaction(self.session_factory) as session:
-                repository = TranscriptionJobRepository(session)
+                repository = LegacyTranscriptionJobRepository(session)
                 repository.complete_job(
                     job_uuid,
                     result_data=whisper_payload.model_dump(mode="json"),
@@ -123,7 +125,7 @@ class WorkerMonoVoice:
         ) as error:
             if job_found and job_uuid is not None:
                 with transaction(self.session_factory) as session:
-                    repository = TranscriptionJobRepository(session)
+                    repository = LegacyTranscriptionJobRepository(session)
                     repository.fail_job(
                         job_uuid,
                         error_message=str(error),

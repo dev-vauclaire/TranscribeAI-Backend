@@ -1,3 +1,5 @@
+"""Compatibilité temporaire du worker synchrone pendant la refonte des repositories."""
+
 from datetime import datetime, timezone
 from typing import Any, Sequence
 from uuid import UUID
@@ -5,14 +7,16 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from transcribe_ai_shared.database.models import (
+from transcribe_ai_shared import (
     JobStatus,
     TranscriptionJob,
     TranscriptionResult,
 )
 
 
-class TranscriptionJobRepository:
+class LegacyTranscriptionJobRepository:
+    """Préserve le worker existant jusqu'à sa migration asynchrone."""
+
     def __init__(self, session: Session) -> None:
         self._session = session
 

@@ -20,10 +20,19 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres \
 ## Révisions
 
 La révision initiale `0001_initial_schema` cible une base vide. Elle crée les
-tables `transcription_jobs`, `outbox_events` et `transcription_results`, ainsi
-que leurs enums, contraintes et index.
+tables `transcription_jobs` et `transcription_results`, ainsi que leurs enums,
+contraintes et deux index partiels : `idx_job_dispatch` pour les jobs en attente
+de publication et `idx_job_expired_lease` pour les leases expirés des jobs en
+cours de traitement.
 
-Le downgrade vers `base` est destructif : il supprime les trois tables et les
+## Tests de migration
+
+Chaque révision possède un fichier `test_<revision_id>.py`. Il vérifie
+uniquement l'upgrade depuis la révision précédente et le downgrade vers cette
+révision précédente. Les helpers d'exécution et d'introspection communs sont
+centralisés dans `tests/integration/common.py`.
+
+Le downgrade vers `base` est destructif : il supprime les deux tables et les
 types enum associés. Alembic conserve sa table technique vide
 `alembic_version`.
 

@@ -36,7 +36,7 @@ job_type_enum = postgresql.ENUM(
 
 
 def upgrade() -> None:
-    """Create transcription jobs, outbox events and transcription results."""
+    """Create transcription jobs and transcription results."""
     bind = op.get_bind()
     job_status_enum.create(bind, checkfirst=False)
     job_type_enum.create(bind, checkfirst=False)
@@ -52,6 +52,17 @@ def upgrade() -> None:
         ),
         sa.Column("job_type", job_type_enum, nullable=False),
         sa.Column("audio_uri", sa.Text(), nullable=False),
+        sa.Column(
+            "dispatch_required",
+            sa.Boolean(),
+            server_default=sa.text("true"),
+            nullable=False,
+        ),
+        sa.Column(
+            "last_dispatched_at",
+            sa.DateTime(timezone=True),
+            nullable=True,
+        ),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -91,73 +102,18 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("job_uuid", name="pk_transcription_jobs"),
     )
     op.create_index(
-        "ix_transcription_jobs_status",
+        "idx_job_dispatch",
         "transcription_jobs",
-        ["status"],
+        ["created_at"],
         unique=False,
+        postgresql_where=sa.text("status = 'QUEUED' AND dispatch_required IS TRUE"),
     )
     op.create_index(
-        "ix_transcription_jobs_lease_expires_at",
+        "idx_job_expired_lease",
         "transcription_jobs",
         ["lease_expires_at"],
         unique=False,
-    )
-
-    op.create_table(
-        "outbox_events",
-        sa.Column("event_uuid", sa.Uuid(), nullable=False),
-        sa.Column("job_uuid", sa.Uuid(), nullable=False),
-        sa.Column("event_type", sa.String(length=255), nullable=False),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-        ),
-        sa.Column("published_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("locked_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("locked_by", sa.String(length=255), nullable=True),
-        sa.Column(
-            "attempt_count",
-            sa.Integer(),
-            server_default=sa.text("0"),
-            nullable=False,
-        ),
-        sa.Column("last_error", sa.Text(), nullable=True),
-        sa.CheckConstraint(
-            "attempt_count >= 0",
-            name="attempt_count_non_negative",
-        ),
-        sa.CheckConstraint(
-            "length(btrim(event_type)) > 0",
-            name="event_type_non_empty",
-        ),
-        sa.CheckConstraint(
-            "(locked_at IS NULL AND locked_by IS NULL) OR "
-            "(locked_at IS NOT NULL AND locked_by IS NOT NULL)",
-            name="lock_fields_consistent",
-        ),
-        sa.ForeignKeyConstraint(
-            ["job_uuid"],
-            ["transcription_jobs.job_uuid"],
-            name="fk_outbox_events_job_uuid_transcription_jobs",
-            ondelete="RESTRICT",
-            onupdate="RESTRICT",
-        ),
-        sa.PrimaryKeyConstraint("event_uuid", name="pk_outbox_events"),
-    )
-    op.create_index(
-        "ix_outbox_events_job_uuid",
-        "outbox_events",
-        ["job_uuid"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_outbox_events_unpublished_created_at",
-        "outbox_events",
-        ["created_at"],
-        unique=False,
-        postgresql_where=sa.text("published_at IS NULL"),
+        postgresql_where=sa.text("status = 'PROCESSING'"),
     )
 
     op.create_table(
@@ -205,17 +161,10 @@ def downgrade() -> None:
     """Remove all transcription schema objects."""
     op.drop_table("transcription_results")
     op.drop_index(
-        "ix_outbox_events_unpublished_created_at",
-        table_name="outbox_events",
-        postgresql_where=sa.text("published_at IS NULL"),
-    )
-    op.drop_index("ix_outbox_events_job_uuid", table_name="outbox_events")
-    op.drop_table("outbox_events")
-    op.drop_index(
-        "ix_transcription_jobs_lease_expires_at",
+        "idx_job_expired_lease",
         table_name="transcription_jobs",
     )
-    op.drop_index("ix_transcription_jobs_status", table_name="transcription_jobs")
+    op.drop_index("idx_job_dispatch", table_name="transcription_jobs")
     op.drop_table("transcription_jobs")
 
     bind = op.get_bind()

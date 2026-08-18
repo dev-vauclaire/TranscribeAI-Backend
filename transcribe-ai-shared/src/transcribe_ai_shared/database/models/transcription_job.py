@@ -5,9 +5,11 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     Enum as SqlEnum,
+    Index,
     String,
     Text,
     Uuid,
@@ -24,7 +26,6 @@ from transcribe_ai_shared.database.models.enums import (
 )
 
 if TYPE_CHECKING:
-    from transcribe_ai_shared.database.models.outbox_event import OutboxEvent
     from transcribe_ai_shared.database.models.transcription_result import (
         TranscriptionResult,
     )
@@ -46,6 +47,16 @@ class TranscriptionJob(Base):
             "(lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)",
             name="lease_fields_consistent",
         ),
+        Index(
+            "idx_job_dispatch",
+            "created_at",
+            postgresql_where=text("status = 'QUEUED' AND dispatch_required IS TRUE"),
+        ),
+        Index(
+            "idx_job_expired_lease",
+            "lease_expires_at",
+            postgresql_where=text("status = 'PROCESSING'"),
+        ),
     )
 
     job_uuid: Mapped[UUID] = mapped_column(
@@ -63,7 +74,6 @@ class TranscriptionJob(Base):
         nullable=False,
         default=JobStatus.QUEUED,
         server_default=JobStatus.QUEUED.value,
-        index=True,
     )
     job_type: Mapped[JobType] = mapped_column(
         SqlEnum(
@@ -75,6 +85,16 @@ class TranscriptionJob(Base):
         nullable=False,
     )
     audio_uri: Mapped[str] = mapped_column(Text, nullable=False)
+    dispatch_required: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+    )
+    last_dispatched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -107,13 +127,8 @@ class TranscriptionJob(Base):
     lease_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
-        index=True,
     )
 
-    outbox_events: Mapped[list[OutboxEvent]] = relationship(
-        back_populates="job",
-        passive_deletes="all",
-    )
     transcription_result: Mapped[TranscriptionResult | None] = relationship(
         back_populates="job",
         passive_deletes="all",

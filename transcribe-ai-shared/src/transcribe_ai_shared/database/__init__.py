@@ -1,40 +1,46 @@
 from transcribe_ai_shared.database.base import Base
 from transcribe_ai_shared.database.config import DatabaseSettings
-from transcribe_ai_shared.database.engine import create_db_engine
+from transcribe_ai_shared.database.engine import (
+    create_async_db_engine,
+    create_db_engine,
+)
 from transcribe_ai_shared.database.models import (
     JobStatus,
     JobType,
-    OutboxEvent,
     TranscriptionJob,
     TranscriptionResult,
 )
-from transcribe_ai_shared.database.repositories import TranscriptionJobRepository
+from transcribe_ai_shared.database.repositories import JobRepository
 from transcribe_ai_shared.database.schemas import (
-    OutboxEventSchema,
     TranscriptionJobSchema,
     TranscriptionResultSchema,
 )
 from transcribe_ai_shared.database.session import (
+    AsyncSessionFactory,
     SessionFactory,
+    async_transaction,
     check_postgres_connection,
+    create_async_session_factory,
     create_session_factory,
     transaction,
 )
 
 __all__ = [
     "Base",
+    "AsyncSessionFactory",
     "DatabaseSettings",
     "JobStatus",
     "JobType",
-    "OutboxEvent",
-    "OutboxEventSchema",
+    "JobRepository",
     "SessionFactory",
     "TranscriptionJob",
-    "TranscriptionJobRepository",
     "TranscriptionJobSchema",
     "TranscriptionResult",
     "TranscriptionResultSchema",
+    "async_transaction",
     "check_postgres_connection",
+    "create_async_db_engine",
+    "create_async_session_factory",
     "create_db_engine",
     "create_session_factory",
     "transaction",

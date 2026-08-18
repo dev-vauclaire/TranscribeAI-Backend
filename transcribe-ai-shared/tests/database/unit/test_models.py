@@ -7,7 +7,6 @@ from transcribe_ai_shared.database.base import NAMING_CONVENTION
 from transcribe_ai_shared.database.models import (
     JobStatus,
     JobType,
-    OutboxEvent,
     TranscriptionJob,
     TranscriptionResult,
 )
@@ -35,6 +34,8 @@ def test_transcription_job_can_be_constructed():
         status=JobStatus.PROCESSING,
         job_type=JobType.FAST,
         audio_uri="audio/job.wav",
+        dispatch_required=False,
+        last_dispatched_at=now,
         created_at=now,
         updated_at=now,
         started_at=now,
@@ -47,30 +48,42 @@ def test_transcription_job_can_be_constructed():
     assert job.status is JobStatus.PROCESSING
     assert job.job_type is JobType.FAST
     assert job.audio_uri == "audio/job.wav"
+    assert job.dispatch_required is False
+    assert job.last_dispatched_at == now
     assert job.attempt_count == 1
     assert job.lease_owner == "worker-fast-1"
 
 
-def test_outbox_event_can_be_constructed():
-    event_uuid = uuid4()
-    job_uuid = uuid4()
-    now = datetime.now(timezone.utc)
+def test_transcription_job_dispatch_columns_match_contract():
+    dispatch_required = TranscriptionJob.__table__.c.dispatch_required
+    last_dispatched_at = TranscriptionJob.__table__.c.last_dispatched_at
 
-    event = OutboxEvent(
-        event_uuid=event_uuid,
-        job_uuid=job_uuid,
-        event_type="transcription.requested",
-        created_at=now,
-        locked_at=now,
-        locked_by="dispatcher-1",
-        attempt_count=2,
+    assert dispatch_required.nullable is False
+    assert dispatch_required.default.arg is True
+    assert str(dispatch_required.server_default.arg) == "true"
+    assert last_dispatched_at.nullable is True
+    assert last_dispatched_at.default is None
+    assert last_dispatched_at.server_default is None
+
+
+def test_transcription_job_indexes_match_repository_queries():
+    indexes = {index.name: index for index in TranscriptionJob.__table__.indexes}
+
+    assert indexes.keys() == {"idx_job_dispatch", "idx_job_expired_lease"}
+
+    dispatch_index = indexes["idx_job_dispatch"]
+    assert tuple(column.name for column in dispatch_index.columns) == ("created_at",)
+    assert str(dispatch_index.dialect_options["postgresql"]["where"]) == (
+        "status = 'QUEUED' AND dispatch_required IS TRUE"
     )
 
-    assert event.event_uuid == event_uuid
-    assert event.job_uuid == job_uuid
-    assert event.event_type == "transcription.requested"
-    assert event.locked_by == "dispatcher-1"
-    assert event.attempt_count == 2
+    expired_lease_index = indexes["idx_job_expired_lease"]
+    assert tuple(column.name for column in expired_lease_index.columns) == (
+        "lease_expires_at",
+    )
+    assert str(expired_lease_index.dialect_options["postgresql"]["where"]) == (
+        "status = 'PROCESSING'"
+    )
 
 
 def test_transcription_result_can_be_constructed():
@@ -98,7 +111,7 @@ def test_transcription_result_can_be_constructed():
 
 @pytest.mark.parametrize(
     "model",
-    [TranscriptionJob, OutboxEvent, TranscriptionResult],
+    [TranscriptionJob, TranscriptionResult],
 )
 def test_models_use_shared_metadata_naming_convention(model):
     assert model.metadata.naming_convention == NAMING_CONVENTION
@@ -114,6 +127,8 @@ def test_models_use_shared_metadata_naming_convention(model):
                 "status",
                 "job_type",
                 "audio_uri",
+                "dispatch_required",
+                "last_dispatched_at",
                 "created_at",
                 "updated_at",
                 "started_at",
@@ -124,21 +139,6 @@ def test_models_use_shared_metadata_naming_convention(model):
                 "lease_expires_at",
             },
             {"job_uuid"},
-        ),
-        (
-            OutboxEvent,
-            {
-                "event_uuid",
-                "job_uuid",
-                "event_type",
-                "created_at",
-                "published_at",
-                "locked_at",
-                "locked_by",
-                "attempt_count",
-                "last_error",
-            },
-            {"event_uuid"},
         ),
         (
             TranscriptionResult,
@@ -166,22 +166,10 @@ def test_transcription_result_note_is_nullable():
     assert TranscriptionResult.__table__.c.note.nullable is True
 
 
-@pytest.mark.parametrize("model", [OutboxEvent, TranscriptionResult])
-def test_child_models_reference_transcription_job(model):
+def test_transcription_result_references_transcription_job():
     foreign_keys = {
         (foreign_key.parent.name, foreign_key.target_fullname, foreign_key.ondelete)
-        for foreign_key in model.__table__.foreign_keys
+        for foreign_key in TranscriptionResult.__table__.foreign_keys
     }
 
     assert foreign_keys == {("job_uuid", "transcription_jobs.job_uuid", "RESTRICT")}
-
-
-def test_outbox_defines_unpublished_event_polling_index():
-    index = next(
-        index
-        for index in OutboxEvent.__table__.indexes
-        if index.name == "ix_outbox_events_unpublished_created_at"
-    )
-
-    assert [column.name for column in index.columns] == ["created_at"]
-    assert str(index.dialect_options["postgresql"]["where"]) == ("published_at IS NULL")

@@ -1,22 +1,27 @@
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 
 import pytest
+import pytest_asyncio
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import Engine, MetaData, delete
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from testcontainers.postgres import PostgresContainer
 
 from migration.main import create_alembic_config
 from transcribe_ai_shared.database.config import DatabaseSettings
-from transcribe_ai_shared.database.engine import create_db_engine
+from transcribe_ai_shared.database.engine import (
+    create_async_db_engine,
+    create_db_engine,
+)
 from transcribe_ai_shared.database.models import (
-    OutboxEvent,
     TranscriptionJob,
     TranscriptionResult,
 )
 from transcribe_ai_shared.database.session import (
     SessionFactory,
+    create_async_session_factory,
     create_session_factory,
 )
 
@@ -80,6 +85,23 @@ def session_factory(setup_db):
     return create_session_factory(setup_db)
 
 
+@pytest_asyncio.fixture
+async def async_session_factory(
+    postgres_container: PostgresContainer,
+    setup_db: Engine,
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """Fournit des sessions async sur le schéma créé par Alembic."""
+    settings = DatabaseSettings(
+        url=postgres_container.get_connection_url(),
+    )
+    engine = create_async_db_engine(settings)
+    factory = create_async_session_factory(engine)
+    try:
+        yield factory
+    finally:
+        await engine.dispose()
+
+
 @pytest.fixture
 def db_session(session_factory):
     with session_factory() as session:
@@ -93,5 +115,4 @@ def clean_database(session_factory: SessionFactory) -> Iterator[None]:
 
     with session_factory.begin() as session:
         session.execute(delete(TranscriptionResult))
-        session.execute(delete(OutboxEvent))
         session.execute(delete(TranscriptionJob))

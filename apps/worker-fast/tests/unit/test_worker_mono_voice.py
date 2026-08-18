@@ -43,7 +43,7 @@ def configure_repository(monkeypatch, job):
     repository_class = Mock(return_value=repository)
     monkeypatch.setattr(
         worker_module,
-        "TranscriptionJobRepository",
+        "LegacyTranscriptionJobRepository",
         repository_class,
     )
 

@@ -2,14 +2,13 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Text, delete, inspect, select, text
+from sqlalchemy import Boolean, DateTime, Text, delete, inspect, text
 from sqlalchemy.dialects.postgresql import ENUM, JSONB, UUID
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from transcribe_ai_shared.database.models import (
     JobStatus,
     JobType,
-    OutboxEvent,
     TranscriptionJob,
     TranscriptionResult,
 )
@@ -34,7 +33,6 @@ def test_postgresql_contains_migrated_transcription_tables(setup_db):
     assert table_names == {
         "alembic_version",
         "transcription_jobs",
-        "outbox_events",
         "transcription_results",
     }
 
@@ -43,7 +41,6 @@ def test_postgresql_contains_migrated_transcription_tables(setup_db):
     ("model", "primary_key"),
     [
         (TranscriptionJob, ["job_uuid"]),
-        (OutboxEvent, ["event_uuid"]),
         (TranscriptionResult, ["job_uuid"]),
     ],
 )
@@ -74,15 +71,21 @@ def test_postgresql_uses_native_uuid_jsonb_and_enums(setup_db):
     ]
     assert isinstance(job_columns["job_type"]["type"], ENUM)
     assert job_columns["job_type"]["type"].enums == ["FAST", "BATCH"]
+    assert isinstance(job_columns["dispatch_required"]["type"], Boolean)
+    assert job_columns["dispatch_required"]["nullable"] is False
+    assert job_columns["dispatch_required"]["default"] == "true"
+    assert isinstance(job_columns["last_dispatched_at"]["type"], DateTime)
+    assert job_columns["last_dispatched_at"]["type"].timezone is True
+    assert job_columns["last_dispatched_at"]["nullable"] is True
+    assert job_columns["last_dispatched_at"]["default"] is None
     assert isinstance(result_columns["job_uuid"]["type"], UUID)
     assert isinstance(result_columns["result"]["type"], JSONB)
     assert isinstance(result_columns["note"]["type"], Text)
     assert result_columns["note"]["nullable"] is True
 
 
-@pytest.mark.parametrize("model", [OutboxEvent, TranscriptionResult])
-def test_postgresql_child_foreign_keys_restrict_parent_changes(setup_db, model):
-    foreign_keys = inspect(setup_db).get_foreign_keys(model.__tablename__)
+def test_postgresql_result_foreign_key_restricts_parent_changes(setup_db):
+    foreign_keys = inspect(setup_db).get_foreign_keys(TranscriptionResult.__tablename__)
 
     assert len(foreign_keys) == 1
     foreign_key = foreign_keys[0]
@@ -107,42 +110,54 @@ def test_job_defaults_and_enums_are_persisted(db_session, job_type):
     assert saved is not None
     assert saved.status is JobStatus.QUEUED
     assert saved.job_type is job_type
+    assert saved.dispatch_required is True
+    assert saved.last_dispatched_at is None
     assert saved.attempt_count == 0
     assert saved.created_at.tzinfo is not None
     assert saved.updated_at.tzinfo is not None
 
 
-def test_outbox_and_result_defaults_and_relationships_are_persisted(session_factory):
+def test_job_dispatch_state_is_persisted(session_factory):
+    dispatched_at = datetime(2026, 8, 18, 12, tzinfo=timezone.utc)
+
+    with session_factory.begin() as write_session:
+        job = make_job(
+            dispatch_required=False,
+            last_dispatched_at=dispatched_at,
+        )
+        write_session.add(job)
+        write_session.flush()
+        job_uuid = job.job_uuid
+
+    with session_factory() as read_session:
+        saved = read_session.get(TranscriptionJob, job_uuid)
+
+        assert saved is not None
+        assert saved.dispatch_required is False
+        assert saved.last_dispatched_at == dispatched_at
+        assert saved.last_dispatched_at.tzinfo is not None
+
+
+def test_result_defaults_and_relationship_are_persisted(session_factory):
     with session_factory.begin() as write_session:
         job = make_job()
-        event = OutboxEvent(
-            job=job,
-            event_type="transcription.requested",
-        )
         result = TranscriptionResult(
             job=job,
             result={"text": "Bonjour"},
         )
-        write_session.add_all([job, event, result])
+        write_session.add_all([job, result])
         write_session.flush()
         job_uuid = job.job_uuid
-        event_uuid = event.event_uuid
 
     with session_factory() as read_session:
         saved_job = read_session.get(TranscriptionJob, job_uuid)
-        saved_event = read_session.get(OutboxEvent, event_uuid)
         saved_result = read_session.get(TranscriptionResult, job_uuid)
 
         assert saved_job is not None
-        assert saved_event is not None
         assert saved_result is not None
-        assert saved_event.created_at.tzinfo is not None
-        assert saved_event.attempt_count == 0
         assert saved_result.created_at.tzinfo is not None
         assert saved_result.note is None
-        assert saved_job.outbox_events == [saved_event]
         assert saved_job.transcription_result is saved_result
-        assert saved_event.job is saved_job
         assert saved_result.job is saved_job
 
 
@@ -200,74 +215,14 @@ def test_transcription_job_check_constraints_are_enforced(db_session, overrides)
     db_session.rollback()
 
 
-@pytest.mark.parametrize("child_model", [OutboxEvent, TranscriptionResult])
-def test_child_with_unknown_job_is_rejected(db_session, child_model):
+def test_result_with_unknown_job_is_rejected(db_session):
     unknown_job_uuid = uuid4()
-    if child_model is OutboxEvent:
-        child = OutboxEvent(
-            job_uuid=unknown_job_uuid,
-            event_type="transcription.requested",
-        )
-    else:
-        child = TranscriptionResult(
+    db_session.add(
+        TranscriptionResult(
             job_uuid=unknown_job_uuid,
             result={"text": "Bonjour"},
         )
-    db_session.add(child)
-
-    with pytest.raises(IntegrityError):
-        db_session.commit()
-
-    db_session.rollback()
-
-
-def test_multiple_outbox_events_are_allowed_for_one_job(db_session):
-    job = make_job()
-    db_session.add(job)
-    db_session.flush()
-    db_session.add_all(
-        [
-            OutboxEvent(
-                job_uuid=job.job_uuid,
-                event_type="transcription.requested",
-            ),
-            OutboxEvent(
-                job_uuid=job.job_uuid,
-                event_type="transcription.requeued",
-            ),
-        ]
     )
-    db_session.commit()
-
-    events = db_session.scalars(
-        select(OutboxEvent).where(OutboxEvent.job_uuid == job.job_uuid)
-    ).all()
-
-    assert {event.event_type for event in events} == {
-        "transcription.requested",
-        "transcription.requeued",
-    }
-
-
-@pytest.mark.parametrize(
-    "overrides",
-    [
-        {"event_type": ""},
-        {"attempt_count": -1},
-        {"locked_by": "dispatcher-1"},
-        {"locked_at": datetime.now(timezone.utc)},
-    ],
-)
-def test_outbox_event_check_constraints_are_enforced(db_session, overrides):
-    job = make_job()
-    db_session.add(job)
-    db_session.flush()
-    values = {
-        "job_uuid": job.job_uuid,
-        "event_type": "transcription.requested",
-    }
-    values.update(overrides)
-    db_session.add(OutboxEvent(**values))
 
     with pytest.raises(IntegrityError):
         db_session.commit()
@@ -364,25 +319,17 @@ def test_postgresql_rejects_unknown_enum_values(db_session, status, job_type):
     db_session.rollback()
 
 
-@pytest.mark.parametrize("child_model", [OutboxEvent, TranscriptionResult])
-def test_referenced_job_deletion_is_rejected(db_session, child_model):
+def test_job_referenced_by_result_cannot_be_deleted(db_session):
     job = make_job()
     db_session.add(job)
     db_session.flush()
-    if child_model is OutboxEvent:
-        child = OutboxEvent(
-            job_uuid=job.job_uuid,
-            event_type="transcription.requested",
-        )
-    else:
-        child = TranscriptionResult(
-            job_uuid=job.job_uuid,
-            result={"text": "Bonjour"},
-        )
+    child = TranscriptionResult(
+        job_uuid=job.job_uuid,
+        result={"text": "Bonjour"},
+    )
     db_session.add(child)
     db_session.commit()
     job_uuid = job.job_uuid
-    child_identifier = child.event_uuid if child_model is OutboxEvent else job_uuid
 
     with pytest.raises(IntegrityError):
         db_session.execute(
@@ -392,4 +339,4 @@ def test_referenced_job_deletion_is_rejected(db_session, child_model):
 
     db_session.rollback()
     assert db_session.get(TranscriptionJob, job_uuid) is not None
-    assert db_session.get(child_model, child_identifier) is not None
+    assert db_session.get(TranscriptionResult, job_uuid) is not None
