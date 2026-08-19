@@ -1,15 +1,16 @@
 # Tests du package partagé
 
-Les tests unitaires utilisent des doubles et n'accèdent à aucun service ou
-fichier réel :
+Les tests unitaires sont isolés des services externes. Ils peuvent utiliser des
+doubles ou un dossier temporaire fourni par pytest pour valider un composant
+filesystem local :
 
 ```shell
 uv run pytest -m unit transcribe-ai-shared/tests
 ```
 
-Les tests d'intégration utilisent un dossier temporaire réel ainsi que des
-conteneurs PostgreSQL et Redis éphémères. Ils nécessitent un moteur Docker
-local accessible par Testcontainers.
+Les tests d'intégration utilisent plusieurs composants ou des conteneurs
+PostgreSQL et Redis éphémères. Ils nécessitent un moteur Docker local accessible
+par Testcontainers.
 
 Pour lancer les tests d'intégration, placez vous à la racine du projet
 et exécutez les commandes suivantes :

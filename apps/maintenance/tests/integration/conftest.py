@@ -2,7 +2,6 @@ from collections.abc import Iterator
 
 import pytest
 from sqlalchemy import delete
-from sqlalchemy.orm import Session
 
 from transcribe_ai_shared.database.models import (
     TranscriptionJob,
@@ -11,15 +10,9 @@ from transcribe_ai_shared.database.models import (
 from transcribe_ai_shared.database.session import SessionFactory
 
 
-@pytest.fixture
-def db_session(session_factory: SessionFactory) -> Iterator[Session]:
-    with session_factory() as session:
-        yield session
-        session.rollback()
-
-
 @pytest.fixture(autouse=True)
 def clean_database(session_factory: SessionFactory) -> Iterator[None]:
+    """Isole chaque scénario de cleanup sans recréer le schéma Alembic."""
     yield
 
     with session_factory.begin() as session:

@@ -7,11 +7,21 @@ Ce package fournit les composants communs aux applications du backend.
 - `database` : configuration PostgreSQL, moteur, sessions, modèles et
   repositories ;
 - `queue` : configuration Redis, file de jobs et exceptions associées ;
-- `storage` : configuration et stockage local des fichiers audio ;
+- `storage` : contrat de stockage audio et implémentation sur système de
+  fichiers ;
 - `worker` : configuration commune aux processus workers.
 
 Les éléments supportés sont réexportés depuis `transcribe_ai_shared` et depuis le
 sous-package auquel ils appartiennent.
+
+Le sous-package `storage` sépare explicitement ses responsabilités :
+
+- `models.py` contient les objets de valeur et leurs invariants, sans accès
+  I/O ;
+- `protocols.py` décrit les contrats consommés par les applications ;
+- `filesystem.py` porte l'adaptateur concret du volume partagé ;
+- `exceptions.py` et `config.py` regroupent respectivement les erreurs publiques
+  et la configuration.
 
 ## Modèles de transcription
 
@@ -70,9 +80,31 @@ les variables d'environnement suivantes :
 Le package ne charge pas implicitement de fichier `.env` : le point d'entrée de
 chaque application reste responsable de fournir son environnement.
 
+En production avec un volume Docker partagé, `AUDIO_STORAGE_PATH` doit pointer
+vers `/data/transcriptions`. La racine reste injectable afin que les tests
+puissent utiliser un dossier temporaire et qu'aucun chemin physique ne soit
+persisté dans `TranscriptionJob.audio_uri`.
+
 ## Services
 
 - `RedisQueueService` publie et consomme les identifiants de jobs dans une file
   FIFO Redis.
-- `AudioStorageService` sauvegarde, ouvre et supprime des fichiers audio dans un
-  dossier confiné.
+- `AudioStorage` définit le contrat synchrone consommé par l'API et les workers.
+- `AudioLocation` encapsule l'URI opaque persistée dans
+  `TranscriptionJob.audio_uri`.
+- `FileSystemAudioStorage` sauvegarde les flux dans
+  `{racine}/{job_uuid}/input.{extension}`, puis les ouvre ou les supprime sans
+  exposer le chemin physique aux consommateurs. Le flux est d'abord écrit et
+  fermé dans un fichier temporaire du dossier UUID, puis publié par renommage
+  atomique : le chemin final ne contient donc jamais de fichier partiel et un
+  temporaire abandonné reste détectable par la maintenance. Les collisions,
+  fichiers absents et emplacements invalides sont signalés par les exceptions
+  métier du sous-package `storage`.
+- `AudioStorageMaintenance` inventorie les dossiers UUID avec leur date de
+  modification UTC et un jeton de révision opaque. La suppression revalide ce
+  jeton et refuse les UUID non canoniques, liens symboliques, contenus
+  inattendus et dossiers modifiés depuis l'inventaire. Aucun chemin arbitraire
+  n'est exposé aux applications chargées de la maintenance.
+
+Une future implémentation `S3Storage` pourra respecter le même contrat sans
+modifier l'API ni les workers.

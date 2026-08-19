@@ -20,10 +20,11 @@ suivant 2 modes : Mono-voice et Multi-voice (diarization).
 
 ### Architecture du projet et conventions
 
-Il se compose de cinq applications et d'un package partagé entre elles.
+Il se compose de six applications et d'un package partagé entre elles.
 
 - [API](apps/api/README.md)
 - [Dispatcher](apps/dispatcher/README.md)
+- [Maintenance](apps/maintenance/README.md)
 - [Migration](apps/migration/README.md)
 - [Worker fast](apps/worker-fast/README.md)
 - [Worker batch](apps/worker-batch/README.md)

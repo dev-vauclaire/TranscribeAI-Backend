@@ -1,9 +1,16 @@
 import pytest
 
 from transcribe_ai_shared import (
-    AudioStorageService,
+    AudioAlreadyExistsError,
+    AudioDirectoryChangedError,
+    AudioLocation,
+    AudioNotFoundError,
+    AudioStorage,
+    AudioStorageMaintenance,
     AsyncSessionFactory,
     DatabaseSettings,
+    FileSystemAudioStorage,
+    InvalidAudioLocationError,
     JobRepository,
     JobStatus,
     JobType,
@@ -11,14 +18,14 @@ from transcribe_ai_shared import (
     RedisQueueService,
     RedisSettings,
     SessionFactory,
+    StorageScanResult,
     StorageSettings,
+    TranscriptionDirectory,
     TranscriptionJob,
     TranscriptionJobSchema,
     TranscriptionResult,
     TranscriptionResultSchema,
-    UploadedAudio,
     WorkerSettings,
-    WrongAudioPathError,
     async_transaction,
     check_postgres_connection,
     create_async_db_engine,
@@ -33,9 +40,16 @@ pytestmark = pytest.mark.unit
 
 
 def test_supported_public_imports_are_available():
-    assert AudioStorageService is not None
+    assert AudioAlreadyExistsError is not None
+    assert AudioDirectoryChangedError is not None
+    assert AudioLocation is not None
+    assert AudioNotFoundError is not None
+    assert AudioStorage is not None
+    assert AudioStorageMaintenance is not None
     assert AsyncSessionFactory is not None
     assert DatabaseSettings is not None
+    assert FileSystemAudioStorage is not None
+    assert InvalidAudioLocationError is not None
     assert JobStatus is not None
     assert JobType is not None
     assert JobRepository is not None
@@ -43,14 +57,14 @@ def test_supported_public_imports_are_available():
     assert RedisQueueService is not None
     assert RedisSettings is not None
     assert SessionFactory is not None
+    assert StorageScanResult is not None
     assert StorageSettings is not None
+    assert TranscriptionDirectory is not None
     assert TranscriptionJob is not None
     assert TranscriptionJobSchema is not None
     assert TranscriptionResult is not None
     assert TranscriptionResultSchema is not None
-    assert UploadedAudio is not None
     assert WorkerSettings is not None
-    assert WrongAudioPathError is not None
     assert async_transaction is not None
     assert check_postgres_connection is not None
     assert create_async_db_engine is not None

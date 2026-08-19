@@ -1,4 +1,6 @@
+from collections.abc import Collection
 from datetime import datetime
+from itertools import batched
 from uuid import UUID
 
 from sqlalchemy import func, literal, select, update
@@ -9,6 +11,9 @@ from transcribe_ai_shared.database.models import (
     JobStatus,
     TranscriptionJob,
 )
+
+
+_JOB_UUID_BATCH_SIZE = 1_000
 
 
 def _literal_job_status(status: JobStatus) -> ColumnElement[JobStatus]:
@@ -34,6 +39,30 @@ class JobRepository:
     async def get_by_uuid(self, job_uuid: UUID) -> TranscriptionJob | None:
         """Recherche un job par sa clé primaire."""
         return await self._session.get(TranscriptionJob, job_uuid)
+
+    async def get_jobs_by_uuids(
+        self,
+        job_uuids: Collection[UUID],
+    ) -> list[TranscriptionJob]:
+        """Charge les jobs existants par lots, sans garantir leur ordre.
+
+        Les UUID dupliqués sont ignorés et une erreur sur un lot est propagée :
+        l'appelant ne peut donc pas confondre un résultat partiel avec des jobs
+        absents de PostgreSQL.
+        """
+        unique_job_uuids = tuple(dict.fromkeys(job_uuids))
+        if not unique_job_uuids:
+            return []
+
+        jobs: list[TranscriptionJob] = []
+        for job_uuid_batch in batched(unique_job_uuids, _JOB_UUID_BATCH_SIZE):
+            statement = select(TranscriptionJob).where(
+                TranscriptionJob.job_uuid.in_(job_uuid_batch)
+            )
+            result = await self._session.scalars(statement)
+            jobs.extend(result.all())
+
+        return jobs
 
     async def find_jobs_requiring_dispatch(
         self,
@@ -195,6 +224,7 @@ class JobRepository:
             .values(
                 status=JobStatus.FAILED,
                 last_error=error_code,
+                completed_at=func.now(),
             )
         )
         result = await self._session.execute(statement)
@@ -213,7 +243,10 @@ class JobRepository:
                 TranscriptionJob.status == JobStatus.PROCESSING,
                 TranscriptionJob.lease_owner == worker_id,
             )
-            .values(status=JobStatus.COMPLETED)
+            .values(
+                status=JobStatus.COMPLETED,
+                completed_at=func.now(),
+            )
         )
         result = await self._session.execute(statement)
         return result.rowcount == 1

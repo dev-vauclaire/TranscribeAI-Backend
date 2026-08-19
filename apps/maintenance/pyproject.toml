@@ -1,0 +1,24 @@
+[project]
+name = "maintenance"
+version = "0.1.0"
+description = "Application one-shot chargée de la maintenance du backend"
+readme = "README.md"
+authors = [
+    { name = "dev-vauclaire", email = "dev@ch-vauclaire.fr" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.13.4,<3",
+    "pydantic-settings>=2.14.2,<3",
+    "transcribe-ai-shared",
+]
+
+[project.scripts]
+cleanup-storage = "maintenance.main:main"
+
+[tool.uv.sources]
+transcribe-ai-shared = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"

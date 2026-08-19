@@ -2,8 +2,8 @@ import logging
 import time
 from worker_fast import ClientWhisper, WorkerMonoVoice, WorkerMonoVoiceSettings
 from transcribe_ai_shared import (
-    AudioStorageService,
     DatabaseSettings,
+    FileSystemAudioStorage,
     RedisQueueService,
     RedisSettings,
     StorageSettings,
@@ -30,7 +30,7 @@ def main() -> None:
             worker_settings.redis_queue_name_mono_voice,
         )
         client_whisper = ClientWhisper(worker_settings.whisper_service_url)
-        audio_storage_service = AudioStorageService(storage_settings.audio_storage_path)
+        audio_storage = FileSystemAudioStorage(storage_settings.audio_storage_path)
 
         logging.info("Lancement des tests de connexion aux services...")
         check_postgres_connection(session_factory)
@@ -44,7 +44,7 @@ def main() -> None:
             session_factory=session_factory,
             redis_queue_service=redis_queue_service,
             client_whisper=client_whisper,
-            audio_storage_service=audio_storage_service,
+            audio_storage=audio_storage,
         )
 
         logging.info("🚀 Worker démarré")

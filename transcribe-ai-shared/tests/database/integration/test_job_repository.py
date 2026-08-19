@@ -1,8 +1,11 @@
 import asyncio
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import Engine, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from transcribe_ai_shared import (
@@ -17,6 +20,34 @@ from transcribe_ai_shared import (
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 NOW = datetime(2026, 8, 18, 12, tzinfo=timezone.utc)
+
+
+@contextmanager
+def capture_transcription_job_selects(
+    engine: Engine,
+) -> Generator[list[str], None, None]:
+    """Capture uniquement les SELECT visant la table des jobs."""
+    statements: list[str] = []
+
+    def record_statement(
+        connection,
+        cursor,
+        statement,
+        parameters,
+        context,
+        executemany,
+    ) -> None:
+        normalized_statement = " ".join(statement.lower().split())
+        if normalized_statement.startswith("select ") and (
+            " from transcription_jobs" in normalized_statement
+        ):
+            statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record_statement)
+    try:
+        yield statements
+    finally:
+        event.remove(engine, "before_cursor_execute", record_statement)
 
 
 def make_job(**overrides) -> TranscriptionJob:
@@ -89,6 +120,82 @@ async def test_get_by_uuid_returns_none_for_an_unknown_job(
     async_session_factory,
 ) -> None:
     assert await read_job(async_session_factory, uuid4()) is None
+
+
+async def test_get_jobs_by_uuids_returns_known_jobs_and_ignores_unknown(
+    async_session_factory,
+) -> None:
+    first_job_uuid = await persist_job(async_session_factory)
+    second_job_uuid = await persist_job(async_session_factory)
+
+    async with async_session_factory() as session:
+        jobs = await JobRepository(session).get_jobs_by_uuids(
+            [first_job_uuid, uuid4(), second_job_uuid]
+        )
+
+    assert {job.job_uuid for job in jobs} == {
+        first_job_uuid,
+        second_job_uuid,
+    }
+
+
+async def test_get_jobs_by_uuids_returns_each_job_once_for_duplicate_uuids(
+    async_session_factory,
+) -> None:
+    job_uuid = await persist_job(async_session_factory)
+
+    async with async_session_factory() as session:
+        jobs = await JobRepository(session).get_jobs_by_uuids(
+            [job_uuid, job_uuid, job_uuid]
+        )
+
+    assert [job.job_uuid for job in jobs] == [job_uuid]
+
+
+async def test_get_jobs_by_uuids_empty_collection_does_not_query_database(
+    async_session_factory,
+) -> None:
+    async with async_session_factory() as session:
+        engine = session.sync_session.get_bind()
+        assert isinstance(engine, Engine)
+        with capture_transcription_job_selects(engine) as statements:
+            jobs = await JobRepository(session).get_jobs_by_uuids([])
+
+    assert jobs == []
+    assert statements == []
+
+
+async def test_get_jobs_by_uuids_uses_one_select_below_batch_size(
+    async_session_factory,
+) -> None:
+    job_uuids = [
+        await persist_job(async_session_factory),
+        await persist_job(async_session_factory),
+    ]
+
+    async with async_session_factory() as session:
+        engine = session.sync_session.get_bind()
+        assert isinstance(engine, Engine)
+        with capture_transcription_job_selects(engine) as statements:
+            jobs = await JobRepository(session).get_jobs_by_uuids(job_uuids)
+
+    assert {job.job_uuid for job in jobs} == set(job_uuids)
+    assert len(statements) == 1
+
+
+async def test_get_jobs_by_uuids_splits_large_inputs_into_batches(
+    async_session_factory,
+) -> None:
+    unknown_job_uuids = [uuid4() for _ in range(1_001)]
+
+    async with async_session_factory() as session:
+        engine = session.sync_session.get_bind()
+        assert isinstance(engine, Engine)
+        with capture_transcription_job_selects(engine) as statements:
+            jobs = await JobRepository(session).get_jobs_by_uuids(unknown_job_uuids)
+
+    assert jobs == []
+    assert len(statements) == 2
 
 
 async def test_find_jobs_requiring_dispatch_filters_orders_and_limits(
@@ -649,6 +756,8 @@ async def test_mark_failed_updates_a_job_owned_by_the_worker(
     assert saved is not None
     assert saved.status is JobStatus.FAILED
     assert saved.last_error == "MODEL_ERROR"
+    assert saved.completed_at is not None
+    assert saved.completed_at.tzinfo is not None
 
 
 @pytest.mark.parametrize(
@@ -665,11 +774,17 @@ async def test_mark_failed_refuses_an_invalid_status_or_owner(
     status: JobStatus,
     requesting_owner: str,
 ) -> None:
+    previous_completed_at = (
+        NOW - timedelta(hours=1)
+        if status in {JobStatus.COMPLETED, JobStatus.FAILED}
+        else None
+    )
     job_uuid = await persist_job(
         async_session_factory,
         status=status,
         lease_owner="worker-fast-1",
         lease_expires_at=NOW + timedelta(minutes=5),
+        completed_at=previous_completed_at,
     )
 
     async with async_session_factory.begin() as session:
@@ -685,6 +800,7 @@ async def test_mark_failed_refuses_an_invalid_status_or_owner(
     assert saved.status is status
     assert saved.last_error is None
     assert saved.lease_owner == "worker-fast-1"
+    assert saved.completed_at == previous_completed_at
 
 
 async def test_mark_completed_updates_a_job_owned_by_the_worker(
@@ -707,6 +823,8 @@ async def test_mark_completed_updates_a_job_owned_by_the_worker(
     assert completed is True
     assert saved is not None
     assert saved.status is JobStatus.COMPLETED
+    assert saved.completed_at is not None
+    assert saved.completed_at.tzinfo is not None
 
 
 @pytest.mark.parametrize(
@@ -723,11 +841,17 @@ async def test_mark_completed_refuses_an_invalid_status_or_owner(
     status: JobStatus,
     requesting_owner: str,
 ) -> None:
+    previous_completed_at = (
+        NOW - timedelta(hours=1)
+        if status in {JobStatus.COMPLETED, JobStatus.FAILED}
+        else None
+    )
     job_uuid = await persist_job(
         async_session_factory,
         status=status,
         lease_owner="worker-fast-1",
         lease_expires_at=NOW + timedelta(minutes=5),
+        completed_at=previous_completed_at,
     )
 
     async with async_session_factory.begin() as session:
@@ -741,3 +865,4 @@ async def test_mark_completed_refuses_an_invalid_status_or_owner(
     assert saved is not None
     assert saved.status is status
     assert saved.lease_owner == "worker-fast-1"
+    assert saved.completed_at == previous_completed_at

@@ -29,7 +29,7 @@ def bootstrap_dependencies(monkeypatch):
     session_factory = Mock()
     redis_queue_service = Mock()
     whisper_client = Mock()
-    audio_storage_service = Mock()
+    audio_storage = Mock()
     worker = Mock()
     sleep = Mock(side_effect=KeyboardInterrupt)
 
@@ -65,23 +65,23 @@ def bootstrap_dependencies(monkeypatch):
     monkeypatch.setattr(main_module, "RedisQueueService", redis_service_class)
     whisper_client_class = Mock(return_value=whisper_client)
     monkeypatch.setattr(main_module, "ClientWhisper", whisper_client_class)
-    audio_storage_service_class = Mock(return_value=audio_storage_service)
+    file_system_audio_storage_class = Mock(return_value=audio_storage)
     monkeypatch.setattr(
         main_module,
-        "AudioStorageService",
-        audio_storage_service_class,
+        "FileSystemAudioStorage",
+        file_system_audio_storage_class,
     )
     worker_class = Mock(return_value=worker)
     monkeypatch.setattr(main_module, "WorkerMonoVoice", worker_class)
     monkeypatch.setattr(main_module.time, "sleep", sleep)
 
     return SimpleNamespace(
-        audio_storage_service=audio_storage_service,
-        audio_storage_service_class=audio_storage_service_class,
+        audio_storage=audio_storage,
         create_db_engine=create_db_engine,
         create_session_factory=create_session_factory,
         database_settings=database_settings,
         engine=engine,
+        file_system_audio_storage_class=file_system_audio_storage_class,
         redis_queue_service=redis_queue_service,
         redis_service_class=redis_service_class,
         redis_settings=redis_settings,
@@ -121,14 +121,14 @@ def test_main_checks_dependencies_before_starting_worker(
     )
     bootstrap_dependencies.redis_queue_service.check_redis_connection.assert_called_once_with()
     bootstrap_dependencies.whisper_client.check_whisper_connection.assert_called_once_with()
-    bootstrap_dependencies.audio_storage_service_class.assert_called_once_with(
+    bootstrap_dependencies.file_system_audio_storage_class.assert_called_once_with(
         bootstrap_dependencies.storage_settings.audio_storage_path
     )
     bootstrap_dependencies.worker_class.assert_called_once_with(
         session_factory=bootstrap_dependencies.session_factory,
         redis_queue_service=bootstrap_dependencies.redis_queue_service,
         client_whisper=bootstrap_dependencies.whisper_client,
-        audio_storage_service=bootstrap_dependencies.audio_storage_service,
+        audio_storage=bootstrap_dependencies.audio_storage,
     )
     bootstrap_dependencies.worker.run_once.assert_called_once_with()
     bootstrap_dependencies.sleep.assert_called_once_with(3)
