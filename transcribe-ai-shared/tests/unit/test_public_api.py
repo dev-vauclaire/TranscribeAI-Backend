@@ -7,16 +7,21 @@ from transcribe_ai_shared import (
     AudioNotFoundError,
     AudioStorage,
     AudioStorageMaintenance,
+    AutoClaimResult,
     AsyncSessionFactory,
     DatabaseSettings,
     FileSystemAudioStorage,
     InvalidAudioLocationError,
+    InvalidJobStreamMessageError,
     JobRepository,
+    JobStreamMessage,
     JobStatus,
     JobType,
     RedisConnectionError,
-    RedisQueueService,
+    RedisOperationError,
     RedisSettings,
+    RedisTranscriptionStreams,
+    ReceivedJobStreamMessage,
     ResultRepository,
     SessionFactory,
     StorageScanResult,
@@ -26,6 +31,8 @@ from transcribe_ai_shared import (
     TranscriptionJobSchema,
     TranscriptionResult,
     TranscriptionResultSchema,
+    TranscriptionStreamName,
+    TranscriptionStreams,
     WorkerSettings,
     async_transaction,
     check_postgres_connection,
@@ -34,6 +41,7 @@ from transcribe_ai_shared import (
     create_db_engine,
     create_session_factory,
     transaction,
+    stream_name_for_job_type,
 )
 
 
@@ -47,16 +55,21 @@ def test_supported_public_imports_are_available():
     assert AudioNotFoundError is not None
     assert AudioStorage is not None
     assert AudioStorageMaintenance is not None
+    assert AutoClaimResult is not None
     assert AsyncSessionFactory is not None
     assert DatabaseSettings is not None
     assert FileSystemAudioStorage is not None
     assert InvalidAudioLocationError is not None
+    assert InvalidJobStreamMessageError is not None
     assert JobStatus is not None
     assert JobType is not None
     assert JobRepository is not None
+    assert JobStreamMessage is not None
+    assert ReceivedJobStreamMessage is not None
     assert RedisConnectionError is not None
-    assert RedisQueueService is not None
+    assert RedisOperationError is not None
     assert RedisSettings is not None
+    assert RedisTranscriptionStreams is not None
     assert ResultRepository is not None
     assert SessionFactory is not None
     assert StorageScanResult is not None
@@ -66,6 +79,8 @@ def test_supported_public_imports_are_available():
     assert TranscriptionJobSchema is not None
     assert TranscriptionResult is not None
     assert TranscriptionResultSchema is not None
+    assert TranscriptionStreamName is not None
+    assert TranscriptionStreams is not None
     assert WorkerSettings is not None
     assert async_transaction is not None
     assert check_postgres_connection is not None
@@ -74,3 +89,4 @@ def test_supported_public_imports_are_available():
     assert create_db_engine is not None
     assert create_session_factory is not None
     assert transaction is not None
+    assert stream_name_for_job_type is not None

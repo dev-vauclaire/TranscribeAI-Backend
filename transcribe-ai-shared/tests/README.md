@@ -20,4 +20,5 @@ uv run pytest -m integration transcribe-ai-shared/tests
 ```
 
 Les conteneurs sont démarrés et arrêtés par les fixtures de session. La suite
-Redis crée en plus une file unique par test et la supprime après utilisation.
+Redis vide la base du conteneur avant et après chaque test afin d'isoler les
+deux streams logiques et leurs consumer groups.

@@ -6,7 +6,7 @@ Ce package fournit les composants communs aux applications du backend.
 
 - `database` : configuration PostgreSQL, moteur, sessions, modèles et
   repositories ;
-- `queue` : configuration Redis, file de jobs et exceptions associées ;
+- `queue` : contrats, modèles et adaptateur asynchrone Redis Streams ;
 - `storage` : contrat de stockage audio et implémentation sur système de
   fichiers ;
 - `worker` : configuration commune aux processus workers.
@@ -87,8 +87,21 @@ persisté dans `TranscriptionJob.audio_uri`.
 
 ## Services
 
-- `RedisQueueService` publie et consomme les identifiants de jobs dans une file
-  FIFO Redis.
+- `TranscriptionStreams` définit les primitives asynchrones communes au
+  dispatcher et aux workers sans contenir leur boucle métier.
+- `RedisTranscriptionStreams` publie les jobs FAST dans
+  `transcription:fast` et les jobs BATCH dans `transcription:batch`. Le payload
+  contient uniquement `job_uuid` et `attempt_count`; le type est porté par le
+  stream. Les groupes sont créés depuis `0-0` avec `MKSTREAM`, afin de rendre
+  visibles les messages publiés avant leur création.
+- `ack_and_delete` utilise nativement `XACKDEL`. Le projet cible Redis 8.10.1,
+  tandis que cette commande est disponible à partir de Redis 8.2. La politique
+  `KEEPREF` suppose un seul consumer group métier par stream, avec autant de
+  consumers concurrents que nécessaire dans ce groupe.
+- `autoclaim` expose uniquement la primitive Redis et ne décide ni du retry
+  métier ni de la valeur de `TranscriptionJob.attempt_count`.
+- Le point de composition qui crée un `TranscriptionStreams` doit appeler
+  `aclose()` lors de son arrêt afin de libérer le pool de connexions Redis.
 - `AudioStorage` définit le contrat synchrone consommé par l'API et les workers.
 - `AudioLocation` encapsule l'URI opaque persistée dans
   `TranscriptionJob.audio_uri`.
