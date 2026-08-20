@@ -1,10 +1,14 @@
+from uuid import UUID
+
 from fastapi import HTTPException, Response, UploadFile, status
 
 from api.Schemas import (
     TranscriptionCreatedResponse,
     TranscriptionCreationRequest,
+    TranscriptionStatusResponse,
 )
 from api.Services.create_transcription import CreateTranscriptionService
+from api.Services.get_transcription import GetTranscriptionService
 from api.Validators.upload_metadata import UploadMetadataValidator
 from api.exceptions import (
     AudioStorageUnavailableError,
@@ -14,6 +18,8 @@ from api.exceptions import (
     MediaProbeUnavailableError,
     MissingUploadFilenameError,
     TranscriptionPersistenceError,
+    TranscriptionNotFoundError,
+    TranscriptionQueryError,
     UnsupportedAudioCodecError,
     UnsupportedAudioFormatError,
     UnsupportedDeclaredMediaTypeError,
@@ -75,8 +81,36 @@ async def create_transcription(
             detail="Le service de transcription est temporairement indisponible.",
         ) from error
 
-    response.headers["Location"] = f"/transcriptions/{result.job_uuid}"
+    response.headers["Location"] = f"/api/transcriptions/{result.job_uuid}"
     return TranscriptionCreatedResponse(
         job_uuid=result.job_uuid,
         status=result.status,
+    )
+
+
+async def get_transcription(
+    *,
+    job_uuid: UUID,
+    response: Response,
+    service: GetTranscriptionService,
+) -> TranscriptionStatusResponse:
+    """Traduit le use case de consultation en réponse HTTP stable."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        result = await service.get(job_uuid)
+    except TranscriptionNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="La transcription demandée n'existe pas.",
+        ) from error
+    except TranscriptionQueryError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Le statut de la transcription est temporairement indisponible.",
+        ) from error
+
+    return TranscriptionStatusResponse(
+        job_uuid=result.job_uuid,
+        status=result.status,
+        result=result.result,
     )

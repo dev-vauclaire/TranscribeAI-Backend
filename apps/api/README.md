@@ -38,7 +38,7 @@ ne doit pas devenir une application principale cachée derrière des wrappers.
 
 ## Création d'une transcription
 
-### `POST /transcriptions`
+### `POST /api/transcriptions`
 
 La requête utilise `multipart/form-data` avec deux champs :
 
@@ -50,13 +50,13 @@ La requête utilise `multipart/form-data` avec deux champs :
 Exemple :
 
 ```bash
-curl --request POST http://localhost:8000/transcriptions \
+curl --request POST http://localhost:8000/api/transcriptions \
   --form 'audio_file=@sample.wav' \
   --form 'type=FAST'
 ```
 
 Une création réussie retourne `202 Accepted`, avec l'en-tête
-`Location: /transcriptions/{job_uuid}` et le corps suivant :
+`Location: /api/transcriptions/{job_uuid}` et le corps suivant :
 
 ```json
 {
@@ -106,7 +106,36 @@ cas d'incertitude persistante, le fichier est conservé : la maintenance peut
 supprimer un orphelin, tandis que supprimer l'audio d'un job effectivement
 validé rendrait ce job irrécupérable.
 
-### Erreurs publiques
+## Consultation d'une transcription
+
+### `GET /api/transcriptions/{job_uuid}`
+
+La consultation retourne toujours `200 OK` pour un job existant, quel que soit
+son état métier. Le champ `result` reste nul pendant `QUEUED`, `PROCESSING` et
+`FAILED`. Il contient le document JSONB durable uniquement lorsque le job est
+`COMPLETED` :
+
+```json
+{
+  "job_uuid": "6e960dd3-a433-4bc3-89c4-0bd5ac3e68c4",
+  "status": "COMPLETED",
+  "result": {
+    "text": "Bonjour tout le monde."
+  }
+}
+```
+
+Les champs internes comme `audio_uri`, les leases, les données de dispatch et
+`last_error` ne font pas partie du contrat public. Chaque réponse `200` porte
+`Cache-Control: no-store`, car le statut évolue et le résultat peut contenir
+des données sensibles.
+
+- un job absent retourne `404 Not Found` ;
+- un UUID mal formé retourne `422 Unprocessable Content` ;
+- une lecture PostgreSQL impossible ou un job `COMPLETED` sans résultat
+  durable retourne `500 Internal Server Error` sans détail interne.
+
+## Erreurs de création
 
 <!-- markdownlint-disable MD013 -->
 
@@ -201,6 +230,8 @@ l'orchestrateur.
 
 ## Authentification
 
-Cette étape ne définit pas encore de mécanisme d'authentification : la route de
-création est publique. Un middleware FastAPI d'authentification devra être
-ajouté avant toute exposition sur un réseau non fiable.
+Cette étape ne définit pas encore de mécanisme d'authentification : les routes
+de création et de consultation sont publiques. Un UUID v4 difficile à deviner
+ne constitue pas un contrôle d'autorisation. Un middleware FastAPI
+d'authentification devra être ajouté avant toute exposition sur un réseau non
+fiable.

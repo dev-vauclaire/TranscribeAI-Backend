@@ -17,6 +17,7 @@ from transcribe_ai_shared import (
     RedisConnectionError,
     RedisQueueService,
     RedisSettings,
+    ResultRepository,
     SessionFactory,
     StorageScanResult,
     StorageSettings,
@@ -56,6 +57,7 @@ def test_supported_public_imports_are_available():
     assert RedisConnectionError is not None
     assert RedisQueueService is not None
     assert RedisSettings is not None
+    assert ResultRepository is not None
     assert SessionFactory is not None
     assert StorageScanResult is not None
     assert StorageSettings is not None

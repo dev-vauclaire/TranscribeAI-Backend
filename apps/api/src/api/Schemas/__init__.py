@@ -3,9 +3,11 @@
 from api.Schemas.transcriptions import (
     TranscriptionCreatedResponse,
     TranscriptionCreationRequest,
+    TranscriptionStatusResponse,
 )
 
 __all__ = [
     "TranscriptionCreatedResponse",
     "TranscriptionCreationRequest",
+    "TranscriptionStatusResponse",
 ]

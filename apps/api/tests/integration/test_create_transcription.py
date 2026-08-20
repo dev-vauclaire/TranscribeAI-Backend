@@ -183,7 +183,7 @@ async def test_post_transcriptions_commits_job_and_publishes_complete_audio(
     audio_content = _valid_audio_content(extension)
 
     response = await api_client.post(
-        "/transcriptions",
+        "/api/transcriptions",
         data={"type": job_type.value},
         files={
             "audio_file": (
@@ -196,7 +196,7 @@ async def test_post_transcriptions_commits_job_and_publishes_complete_audio(
 
     assert response.status_code == 202
     job_uuid = UUID(response.json()["job_uuid"])
-    assert response.headers["location"] == f"/transcriptions/{job_uuid}"
+    assert response.headers["location"] == f"/api/transcriptions/{job_uuid}"
     assert response.json() == {
         "job_uuid": str(job_uuid),
         "status": JobStatus.QUEUED.value,
@@ -235,7 +235,7 @@ async def test_post_transcriptions_rejects_declared_wav_with_non_audio_content(
     monkeypatch.setattr(audio_storage, "save", save_spy)
 
     response = await api_client.post(
-        "/transcriptions",
+        "/api/transcriptions",
         data={"type": JobType.FAST.value},
         files={
             "audio_file": (
@@ -258,7 +258,7 @@ async def test_post_transcriptions_rejects_real_mp3_disguised_as_wav(
     async_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     response = await api_client.post(
-        "/transcriptions",
+        "/api/transcriptions",
         data={"type": JobType.FAST.value},
         files={
             "audio_file": (
@@ -284,7 +284,7 @@ async def test_post_transcriptions_rejects_unsupported_mime_before_storage(
     monkeypatch.setattr(audio_storage, "save", save_spy)
 
     response = await api_client.post(
-        "/transcriptions",
+        "/api/transcriptions",
         data={"type": JobType.FAST.value},
         files={
             "audio_file": (
@@ -316,7 +316,7 @@ async def test_post_transcriptions_rejects_audio_above_fast_duration_limit(
 
     async with _client_for(app) as client:
         response = await client.post(
-            "/transcriptions",
+            "/api/transcriptions",
             data={"type": JobType.FAST.value},
             files={
                 "audio_file": (
@@ -350,7 +350,7 @@ async def test_post_transcriptions_rolls_back_and_cleans_audio_on_database_error
 
     async with _client_for(app) as client:
         response = await client.post(
-            "/transcriptions",
+            "/api/transcriptions",
             data={"type": JobType.FAST.value},
             files={
                 "audio_file": (

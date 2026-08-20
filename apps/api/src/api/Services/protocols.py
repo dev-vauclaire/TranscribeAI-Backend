@@ -4,7 +4,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from transcribe_ai_shared import TranscriptionJob
+from transcribe_ai_shared import TranscriptionJob, TranscriptionResult
 
 
 class JobCreationRepository(Protocol):
@@ -20,3 +20,26 @@ class JobCreationRepository(Protocol):
 
 
 JobRepositoryFactory: TypeAlias = Callable[[AsyncSession], JobCreationRepository]
+
+
+class JobReadRepository(Protocol):
+    """Partie du repository nécessaire à la consultation d'un job."""
+
+    async def get_by_uuid(self, job_uuid: UUID) -> TranscriptionJob | None:
+        """Retourne le job correspondant ou ``None`` lorsqu'il est absent."""
+        ...
+
+
+class ResultReadRepository(Protocol):
+    """Partie du repository nécessaire à la consultation d'un résultat."""
+
+    async def get_by_job_uuid(
+        self,
+        job_uuid: UUID,
+    ) -> TranscriptionResult | None:
+        """Retourne le résultat unique du job ou ``None`` lorsqu'il est absent."""
+        ...
+
+
+JobReadRepositoryFactory: TypeAlias = Callable[[AsyncSession], JobReadRepository]
+ResultRepositoryFactory: TypeAlias = Callable[[AsyncSession], ResultReadRepository]

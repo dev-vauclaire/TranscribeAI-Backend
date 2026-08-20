@@ -10,7 +10,7 @@ from transcribe_ai_shared.database.models import (
     TranscriptionJob,
     TranscriptionResult,
 )
-from transcribe_ai_shared.database.repositories import JobRepository
+from transcribe_ai_shared.database.repositories import JobRepository, ResultRepository
 from transcribe_ai_shared.database.schemas import (
     TranscriptionJobSchema,
     TranscriptionResultSchema,
@@ -32,6 +32,7 @@ __all__ = [
     "JobStatus",
     "JobType",
     "JobRepository",
+    "ResultRepository",
     "SessionFactory",
     "TranscriptionJob",
     "TranscriptionJobSchema",

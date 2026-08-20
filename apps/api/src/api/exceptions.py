@@ -89,3 +89,11 @@ class AudioStorageUnavailableError(TranscriptionCreationError):
 
 class TranscriptionPersistenceError(TranscriptionCreationError):
     """Le job n'a pas pu être persisté dans PostgreSQL."""
+
+
+class TranscriptionNotFoundError(Exception):
+    """Le job demandé n'existe pas dans PostgreSQL."""
+
+
+class TranscriptionQueryError(Exception):
+    """Le statut ou le résultat n'a pas pu être consulté de façon fiable."""

@@ -1,17 +1,21 @@
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile, status
 
-from api.Controllers import create_transcription
+from api.Controllers import create_transcription, get_transcription
 from api.Routes.dependencies import (
     get_transcription_creation_service,
+    get_transcription_query_service,
     get_upload_metadata_validator,
 )
 from api.Schemas import (
     TranscriptionCreatedResponse,
     TranscriptionCreationRequest,
+    TranscriptionStatusResponse,
 )
 from api.Services.create_transcription import CreateTranscriptionService
+from api.Services.get_transcription import GetTranscriptionService
 from api.Validators.upload_metadata import UploadMetadataValidator
 from transcribe_ai_shared import JobType
 
@@ -77,4 +81,35 @@ async def post_transcription(
         response=response,
         service=service,
         upload_metadata_validator=upload_metadata_validator,
+    )
+
+
+@router.get(
+    "/transcriptions/{job_uuid}",
+    response_model=TranscriptionStatusResponse,
+    responses={
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Aucune transcription ne correspond à cet UUID."
+        },
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {
+            "description": "L'identifiant fourni n'est pas un UUID valide."
+        },
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {
+            "description": "PostgreSQL ou le résultat durable est indisponible."
+        },
+    },
+)
+async def get_transcription_status(
+    job_uuid: UUID,
+    response: Response,
+    service: Annotated[
+        GetTranscriptionService,
+        Depends(get_transcription_query_service),
+    ],
+) -> TranscriptionStatusResponse:
+    """Associe l'UUID public au contrôleur de consultation."""
+    return await get_transcription(
+        job_uuid=job_uuid,
+        response=response,
+        service=service,
     )

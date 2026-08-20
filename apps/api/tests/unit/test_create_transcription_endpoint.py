@@ -118,8 +118,20 @@ def build_app(
     return create_app(
         settings=TEST_SETTINGS,
         transcription_service=service,  # type: ignore[arg-type]
+        transcription_query_service=object(),  # type: ignore[arg-type]
         upload_metadata_validator=validator,  # type: ignore[arg-type]
     )
+
+
+async def test_all_routes_are_namespaced_under_api() -> None:
+    app = build_app(
+        RecordingCreateTranscriptionService(),
+        RecordingUploadMetadataValidator(),
+    )
+
+    route_paths = [route.path for route in app.routes if hasattr(route, "path")]
+    assert route_paths
+    assert all(path.startswith("/api/") for path in route_paths)
 
 
 async def post_transcription(
@@ -136,7 +148,7 @@ async def post_transcription(
         base_url="http://testserver",
     ) as client:
         return await client.post(
-            "/transcriptions",
+            "/api/transcriptions",
             data={"type": transcription_type},
             files={"audio_file": (filename, BytesIO(content), content_type)},
         )
@@ -155,7 +167,7 @@ async def test_post_transcriptions_returns_202_location_and_queued_job(
     )
 
     assert response.status_code == 202
-    assert response.headers["location"] == f"/transcriptions/{JOB_UUID}"
+    assert response.headers["location"] == f"/api/transcriptions/{JOB_UUID}"
     assert response.json() == {
         "job_uuid": str(JOB_UUID),
         "status": JobStatus.QUEUED.value,
