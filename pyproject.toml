@@ -11,6 +11,7 @@ members = [
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28,<1",
     "pre-commit>=4,<5",
     "pytest>=8,<10",
     "pytest-asyncio>=1,<2",

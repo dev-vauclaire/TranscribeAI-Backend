@@ -1,6 +1,11 @@
-from api.Schemas.batch_job_schema import (
-    TranscriptionBatchSchema as TranscriptionBatchSchema,
+"""Schémas d'entrée et de sortie de l'API HTTP."""
+
+from api.Schemas.transcriptions import (
+    TranscriptionCreatedResponse,
+    TranscriptionCreationRequest,
 )
-from api.Schemas.diarization_job_schema import (
-    TranscriptionDiarizationSchema as TranscriptionDiarizationSchema,
-)
+
+__all__ = [
+    "TranscriptionCreatedResponse",
+    "TranscriptionCreationRequest",
+]

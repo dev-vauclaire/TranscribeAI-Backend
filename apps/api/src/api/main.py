@@ -1,13 +1,16 @@
-from api.config import Config
-from api.create_app import create_app_api
+import uvicorn
+
+from api.config import ApiSettings
+from api.create_app import create_app
 
 
 def main() -> None:
-    app = create_app_api(Config)
-    app.run(
-        host=app.config["HOST"],
-        port=app.config["API_PORT"],
-        debug=app.config["DEBUG"],
+    """Lance le serveur ASGI avec la configuration issue de l'environnement."""
+    settings = ApiSettings()
+    uvicorn.run(
+        create_app(settings=settings),
+        host=settings.host,
+        port=settings.port,
     )
 
 

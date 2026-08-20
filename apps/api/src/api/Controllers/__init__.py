@@ -1,8 +1,5 @@
-from api.Controllers.batch_transcription_controller import (
-    createBatchJob as createBatchJob,
-    getBatchTranscriptionByUuid as getBatchTranscriptionByUuid,
-)
-from api.Controllers.diarization_transcription_controller import (
-    createDiarizationJob as createDiarizationJob,
-    getDiarizationByUuid as getDiarizationByUuid,
-)
+"""Contrôleurs traduisant le protocole HTTP vers les services applicatifs."""
+
+from api.Controllers.transcription_controller import create_transcription
+
+__all__ = ["create_transcription"]
