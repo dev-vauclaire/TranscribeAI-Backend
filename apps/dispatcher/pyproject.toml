@@ -8,8 +8,14 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "pydantic>=2.13.4,<3",
+    "pydantic-settings>=2.14.2,<3",
+    "sqlalchemy>=2,<3",
     "transcribe-ai-shared",
 ]
+
+[project.scripts]
+dispatch-transcriptions = "dispatcher.main:main"
 
 [tool.uv.sources]
 transcribe-ai-shared = { workspace = true }

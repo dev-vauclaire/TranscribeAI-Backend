@@ -238,11 +238,19 @@ name = "dispatcher"
 version = "0.1.0"
 source = { editable = "apps/dispatcher" }
 dependencies = [
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "sqlalchemy" },
     { name = "transcribe-ai-shared" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "transcribe-ai-shared", editable = "transcribe-ai-shared" }]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.13.4,<3" },
+    { name = "pydantic-settings", specifier = ">=2.14.2,<3" },
+    { name = "sqlalchemy", specifier = ">=2,<3" },
+    { name = "transcribe-ai-shared", editable = "transcribe-ai-shared" },
+]
 
 [[package]]
 name = "distlib"

@@ -4,6 +4,6 @@ pytestmark = pytest.mark.unit
 
 
 def test_package_import() -> None:
-    import transcribe_ai_shared
+    import dispatcher
 
-    assert transcribe_ai_shared is not None
+    assert dispatcher is not None
