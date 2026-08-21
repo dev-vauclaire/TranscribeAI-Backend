@@ -1,11 +1,11 @@
-# Tests d'intégration du worker fast
+# Tests d'intégration des workers
 
-Cas à couvrir dans une prochaine étape :
+La mécanique Redis Streams et le claim PostgreSQL sont communs à FAST et BATCH.
+Leurs tests d'intégration vivent donc dans :
 
-- traitement complet d'un job ;
-- job inexistant en base de données ;
-- fichier audio inexistant sur le disque ;
-- UUID invalide ;
-- erreur pendant la transcription ;
-- Redis indisponible ;
-- PostgreSQL indisponible.
+```text
+transcribe-ai-shared/tests/worker/integration
+```
+
+Les futures intégrations propres au moteur FAST seront ajoutées ici lorsque ce
+moteur remplacera le fake de développement.

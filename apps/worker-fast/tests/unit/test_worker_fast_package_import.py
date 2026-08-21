@@ -1,9 +1,11 @@
 import pytest
 
+
 pytestmark = pytest.mark.unit
 
 
 def test_package_import() -> None:
-    import transcribe_ai_shared
+    from worker_fast import WorkerFastSettings, run
 
-    assert transcribe_ai_shared is not None
+    assert WorkerFastSettings is not None
+    assert run is not None

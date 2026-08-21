@@ -1,67 +1,73 @@
-import time
-from worker_batch import create_app_worker_multi_voice
-from worker_batch import Config
+import asyncio
+import logging
+from typing import NoReturn
+
+from worker_batch.application import run
+from worker_batch.config import WorkerBatchSettings
+from transcribe_ai_shared import (
+    DatabaseSettings,
+    RedisSettings,
+    Transcriber,
+    WorkerIdle,
+    WorkerProcessResult,
+)
 
 
-def worker_loop(app):
-    while True:
-        redis_queue_service = app.extensions["redis_diarization_queue_service"]
-        job_service = app.extensions["job_service"]
-        audio_manager = app.extensions["audio_manager"]
-        whisperx_diarize_service = app.extensions["diarization_service"]
-
-        # Récupérer un job de la file d'attente Redis (bloquant)
-        job_id = redis_queue_service.pop_job_blocking()
-        print(f"Traitement du job {job_id}...")
-
-        # Mettre à jour le statut du job en "IN_PROGRESS"
-        job_service.update_status(job_id, "PROCESSING")
-
-        try:
-            # Récupérer le job depuis la base de données
-            job = job_service.get_job_by_id(job_id)
-
-            max_speakers = job.settings.get("max_speakers", None)
-            min_speakers = job.settings.get("min_speakers", None)
-
-            params = {"min_speakers": min_speakers, "max_speakers": max_speakers}
-
-            audio_file_path = job.file_path
-            with open(audio_file_path, "rb") as f:
-                audio_file = f
-                # Envoyer le fichier audio au service Whisperx pour diarization
-                diarization = whisperx_diarize_service.send_to_whisperx_service(
-                    audio_file, params
-                )
-
-            # Mettre à jour le job avec la diarization et le statut "COMPLETED"
-            job_service.complete_job(job_id, diarization)
-
-        except Exception as e:
-            # En cas d'erreur, mettre à jour le statut du job en "FAILED"
-            job_service.fail_job(job_id)
-            print(f"Erreur lors du traitement du job {job_id}: {e}")
-
-        finally:
-            # Supprimer le fichier audio après traitement
-            if "audio_file_path" in locals():
-                audio_manager.delete_audio(audio_file_path)
-
-        # Petite pause pour éviter une boucle trop rapide
-        time.sleep(app.config.get("WORKER_LOOP_SLEEP_TIME", 1))
+LOGGER = logging.getLogger(__name__)
 
 
-def main() -> None:
-    # 1. On crée l'application Flask avec la configuration du worker
-    app = create_app_worker_multi_voice(Config)
+def _create_transcriber(settings: WorkerBatchSettings) -> Transcriber:
+    """Construit uniquement le fake explicitement autorisé pour le développement."""
+    if settings.worker_transcriber_backend != "fake":
+        raise RuntimeError("Aucun backend de transcription BATCH n'est configuré")
+    if settings.worker_environment != "development":
+        raise RuntimeError("Le backend fake est réservé au développement")
 
-    # 2. On entre dans le contexte de l'application Flask
-    # Cela permet d'accéder à current_app.config, à la BDD, et charge les variables d'env
-    with app.app_context():
-        print("🚀 Worker diarization demarré ")
-        print(f"📂 Dossier Audio configuré : {app.config.get('AUDIO_STORAGE_PATH')}")
-        worker_loop(app)
+    from transcribe_ai_shared.worker.testing import FakeTranscriber
+
+    return FakeTranscriber()
+
+
+def _log_result(result: WorkerProcessResult) -> None:
+    """Journalise une itération sans exposer le résultat de transcription."""
+    level = logging.DEBUG if isinstance(result, WorkerIdle) else logging.INFO
+    LOGGER.log(
+        level,
+        "worker_batch_iteration_completed result_type=%s",
+        type(result).__name__,
+    )
+
+
+async def _run_from_environment() -> NoReturn:
+    settings = WorkerBatchSettings()
+    await run(
+        database_settings=DatabaseSettings(),
+        redis_settings=RedisSettings(),
+        worker_settings=settings,
+        transcriber=_create_transcriber(settings),
+        on_result=_log_result,
+    )
+
+
+def main() -> int:
+    """Exécute le worker BATCH jusqu'à son interruption ou une erreur."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+
+    try:
+        asyncio.run(_run_from_environment())
+    except KeyboardInterrupt:
+        LOGGER.warning("worker_batch_interrupted")
+        return 130
+    except Exception as error:
+        LOGGER.error("worker_batch_failed error_type=%s", type(error).__name__)
+        return 1
+
+    LOGGER.error("worker_batch_stopped_unexpectedly")
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

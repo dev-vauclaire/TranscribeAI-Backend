@@ -1,9 +1,11 @@
 import pytest
 
+
 pytestmark = pytest.mark.unit
 
 
 def test_package_import() -> None:
-    import transcribe_ai_shared
+    from worker_batch import WorkerBatchSettings, run
 
-    assert transcribe_ai_shared is not None
+    assert WorkerBatchSettings is not None
+    assert run is not None

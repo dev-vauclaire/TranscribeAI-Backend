@@ -9,7 +9,7 @@ Ce package fournit les composants communs aux applications du backend.
 - `queue` : contrats, modèles et adaptateur asynchrone Redis Streams ;
 - `storage` : contrat de stockage audio et implémentation sur système de
   fichiers ;
-- `worker` : configuration commune aux processus workers.
+- `worker` : runtime, contrats et composition communs aux processus workers.
 
 Les éléments supportés sont réexportés depuis `transcribe_ai_shared` et depuis le
 sous-package auquel ils appartiennent.
@@ -22,6 +22,16 @@ Le sous-package `storage` sépare explicitement ses responsabilités :
 - `filesystem.py` porte l'adaptateur concret du volume partagé ;
 - `exceptions.py` et `config.py` regroupent respectivement les erreurs publiques
   et la configuration.
+
+Le sous-package `worker` suit le même découpage :
+
+- `models.py` contient les snapshots et résultats détachés ;
+- `protocols.py` décrit le `Transcriber` et le port PostgreSQL minimal ;
+- `postgresql.py` adapte `JobRepository.claim()` à une transaction courte ;
+- `runtime.py` porte le flux consume, claim et transcribe ;
+- `application.py` compose et ferme les adaptateurs partagés ;
+- `testing.py` contient uniquement le fake explicitement destiné au
+  développement et aux tests.
 
 ## Modèles de transcription
 
@@ -74,6 +84,8 @@ les variables d'environnement suivantes :
 | `RedisSettings` | `REDIS_URL` | oui | — |
 | `StorageSettings` | `AUDIO_STORAGE_PATH` | non | `tmp/audios_buffers` |
 | `WorkerSettings` | `WORKER_ID` | oui | — |
+| `WorkerSettings` | `WORKER_CONSUMER_GROUP` | non | `transcription-workers` |
+| `WorkerSettings` | `WORKER_BLOCK_MILLISECONDS` | non | `5000` |
 | `WorkerSettings` | `WORKER_LEASE_SECONDS` | non | `300` |
 | `WorkerSettings` | `MAX_ATTEMPTS` | non | `3` |
 
@@ -102,6 +114,29 @@ persisté dans `TranscriptionJob.audio_uri`.
   métier ni de la valeur de `TranscriptionJob.attempt_count`.
 - Le point de composition qui crée un `TranscriptionStreams` doit appeler
   `aclose()` lors de son arrêt afin de libérer le pool de connexions Redis.
+- `WorkerRuntime` orchestre une seule itération commune à FAST et BATCH :
+  consommation d'un message, claim PostgreSQL atomique, puis appel du
+  `Transcriber` injecté. `run_worker` porte la boucle, la composition et la
+  fermeture des ressources communes ; chaque application choisit uniquement
+  son `JobType` et son moteur. Le moteur ML pourra ainsi rester chargé entre
+  deux messages.
+- `PostgresWorkerJobStore` committe le claim dans une transaction courte avant
+  de rendre un snapshot détaché au runtime. Aucune transaction PostgreSQL ne
+  reste donc ouverte pendant le traitement audio. Il vérifie aussi, avant le
+  commit, que le type PostgreSQL correspond au stream attribué au worker ; une
+  entrée égarée dans le mauvais stream ne peut donc pas lancer le mauvais
+  moteur.
+- Un claim refusé couvre aussi bien un UUID inexistant qu'un doublon ou un job
+  déjà traité : le runtime acquitte et supprime alors le message sans appeler
+  le transcriber. Après un claim réussi, aucun ACK n'est encore effectué, même
+  lorsque le fake retourne un résultat ; la persistance du résultat et l'ACK
+  final appartiennent à l'étape de finalisation suivante.
+- Un payload invalide ou une exception du transcriber reste dans la PEL. Cette
+  étape ne définit volontairement ni poison queue, ni retry métier, ni
+  `XAUTOCLAIM` automatique.
+- `FakeTranscriber` est disponible uniquement depuis le module explicite
+  `transcribe_ai_shared.worker.testing`. Les applications refusent de
+  l'activer sans un opt-in d'environnement de développement.
 - `AudioStorage` définit le contrat synchrone consommé par l'API et les workers.
 - `AudioLocation` encapsule l'URI opaque persistée dans
   `TranscriptionJob.audio_uri`.

@@ -1,20 +1,34 @@
-# Utilise Python 3.12
-FROM python:3.12-slim
+# syntax=docker/dockerfile:1.7
 
-# Définir le répertoire de travail
-WORKDIR /app
+FROM ghcr.io/astral-sh/uv:0.12.5-python3.12-trixie AS builder
 
-# Installer les dépendances système pour psycopg2 et pip
-RUN apt-get update \
-    && apt-get -y install libpq-dev gcc \
-    && pip install psycopg2
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 
-# Copier les fichiers nécessaires
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+WORKDIR /opt/worker-fast
 
-# Copier le code de l'application
 COPY . .
 
-# Définir la commande de lancement du worker
-ENTRYPOINT ["python", "run_batch_worker.py"]
+RUN uv sync --locked --no-dev --package worker-fast --no-editable
+
+
+FROM python:3.12-slim-trixie AS runtime
+
+ENV PATH="/opt/worker-fast/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    WORKER_ENVIRONMENT=production
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends 'libpq5=17.*' \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 worker-fast \
+    && useradd --uid 10001 --gid worker-fast --no-create-home \
+        --shell /usr/sbin/nologin worker-fast
+
+WORKDIR /opt/worker-fast
+
+COPY --from=builder /opt/worker-fast/.venv /opt/worker-fast/.venv
+
+USER 10001:10001
+
+ENTRYPOINT ["/opt/worker-fast/.venv/bin/worker-fast"]

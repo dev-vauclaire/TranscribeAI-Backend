@@ -1,13 +1,14 @@
 [project]
 name = "worker-batch"
 version = "0.1.0"
-description = "Worker de transcription par lots exécutant les modèles dans son processus"
+description = "Worker consommant les jobs du stream de transcription BATCH"
 readme = "README.md"
 authors = [
     { name = "dev-vauclaire", email = "dev@ch-vauclaire.fr" }
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "pydantic>=2.13.4,<3",
     "transcribe-ai-shared",
 ]
 

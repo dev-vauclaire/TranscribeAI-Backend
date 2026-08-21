@@ -1,64 +1,73 @@
+import asyncio
 import logging
-import time
-from worker_fast import ClientWhisper, WorkerMonoVoice, WorkerMonoVoiceSettings
+from typing import NoReturn
+
+from worker_fast.application import run
+from worker_fast.config import WorkerFastSettings
 from transcribe_ai_shared import (
     DatabaseSettings,
-    FileSystemAudioStorage,
-    RedisQueueService,
     RedisSettings,
-    StorageSettings,
-    check_postgres_connection,
-    create_db_engine,
-    create_session_factory,
+    Transcriber,
+    WorkerIdle,
+    WorkerProcessResult,
 )
 
 
-def main() -> None:
-    database_settings = DatabaseSettings()
-    redis_settings = RedisSettings()
-    storage_settings = StorageSettings()
-    worker_settings = WorkerMonoVoiceSettings()
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+LOGGER = logging.getLogger(__name__)
+
+
+def _create_transcriber(settings: WorkerFastSettings) -> Transcriber:
+    """Construit uniquement le fake explicitement autorisé pour le développement."""
+    if settings.worker_transcriber_backend != "fake":
+        raise RuntimeError("Aucun backend de transcription FAST n'est configuré")
+    if settings.worker_environment != "development":
+        raise RuntimeError("Le backend fake est réservé au développement")
+
+    from transcribe_ai_shared.worker.testing import FakeTranscriber
+
+    return FakeTranscriber()
+
+
+def _log_result(result: WorkerProcessResult) -> None:
+    """Journalise une itération sans exposer le résultat de transcription."""
+    level = logging.DEBUG if isinstance(result, WorkerIdle) else logging.INFO
+    LOGGER.log(
+        level,
+        "worker_fast_iteration_completed result_type=%s",
+        type(result).__name__,
     )
-    engine = create_db_engine(database_settings)
+
+
+async def _run_from_environment() -> NoReturn:
+    settings = WorkerFastSettings()
+    await run(
+        database_settings=DatabaseSettings(),
+        redis_settings=RedisSettings(),
+        worker_settings=settings,
+        transcriber=_create_transcriber(settings),
+        on_result=_log_result,
+    )
+
+
+def main() -> int:
+    """Exécute le worker FAST jusqu'à son interruption ou une erreur."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
 
     try:
-        session_factory = create_session_factory(engine)
-        redis_queue_service = RedisQueueService(
-            str(redis_settings.redis_url),
-            worker_settings.redis_queue_name_mono_voice,
-        )
-        client_whisper = ClientWhisper(worker_settings.whisper_service_url)
-        audio_storage = FileSystemAudioStorage(storage_settings.audio_storage_path)
-
-        logging.info("Lancement des tests de connexion aux services...")
-        check_postgres_connection(session_factory)
-        logging.info("Connexion à la BDD validée !")
-        redis_queue_service.check_redis_connection()
-        logging.info("Connexion à Redis validée !")
-        client_whisper.check_whisper_connection()
-        logging.info("Connexion au service Whisper validée !")
-
-        worker = WorkerMonoVoice(
-            session_factory=session_factory,
-            redis_queue_service=redis_queue_service,
-            client_whisper=client_whisper,
-            audio_storage=audio_storage,
-        )
-
-        logging.info("🚀 Worker démarré")
-        logging.info(f"Configuration: {worker}")
-
-        while True:
-            worker_payload = worker.run_once()
-            logging.info(f"Worker payload: {worker_payload}")
-            time.sleep(worker_settings.worker_loop_sleep_time)
+        asyncio.run(_run_from_environment())
     except KeyboardInterrupt:
-        logging.info("Arrêt du worker demandé par l'utilisateur.")
-    finally:
-        engine.dispose()
+        LOGGER.warning("worker_fast_interrupted")
+        return 130
+    except Exception as error:
+        LOGGER.error("worker_fast_failed error_type=%s", type(error).__name__)
+        return 1
+
+    LOGGER.error("worker_fast_stopped_unexpectedly")
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -11,9 +11,13 @@ pytestmark = pytest.mark.unit
 def isolate_worker_environment(monkeypatch):
     for environment_name in (
         "WORKER_ID",
+        "WORKER_CONSUMER_GROUP",
+        "WORKER_BLOCK_MILLISECONDS",
         "WORKER_LEASE_SECONDS",
         "MAX_ATTEMPTS",
         "worker_id",
+        "worker_consumer_group",
+        "worker_block_milliseconds",
         "worker_lease_seconds",
         "max_attempts",
     ):
@@ -29,6 +33,8 @@ def test_worker_settings_accept_valid_configuration():
     )
 
     assert settings.worker_id == "worker-fast-1"
+    assert settings.worker_consumer_group == "transcription-workers"
+    assert settings.worker_block_milliseconds == 5_000
     assert settings.worker_lease_seconds == 120
     assert settings.max_attempts == 5
 
@@ -45,6 +51,10 @@ def test_worker_settings_require_worker_id():
     ("field_name", "invalid_value", "error_type"),
     [
         ("worker_id", "   ", "string_too_short"),
+        ("worker_id", "w" * 256, "string_too_long"),
+        ("worker_consumer_group", "   ", "string_too_short"),
+        ("worker_block_milliseconds", 0, "greater_than"),
+        ("worker_block_milliseconds", 10_000, "less_than"),
         ("worker_lease_seconds", 0, "greater_than"),
         ("max_attempts", 0, "greater_than_equal"),
     ],
@@ -68,16 +78,22 @@ def test_worker_settings_use_defaults():
 
     assert settings.worker_lease_seconds == 300
     assert settings.max_attempts == 3
+    assert settings.worker_consumer_group == "transcription-workers"
+    assert settings.worker_block_milliseconds == 5_000
 
 
 def test_worker_settings_read_environment(monkeypatch):
     monkeypatch.setenv("WORKER_ID", "worker-from-environment")
+    monkeypatch.setenv("WORKER_CONSUMER_GROUP", "custom-workers")
+    monkeypatch.setenv("WORKER_BLOCK_MILLISECONDS", "750")
     monkeypatch.setenv("WORKER_LEASE_SECONDS", "600")
     monkeypatch.setenv("MAX_ATTEMPTS", "7")
 
     settings = WorkerSettings(_env_file=None)
 
     assert settings.worker_id == "worker-from-environment"
+    assert settings.worker_consumer_group == "custom-workers"
+    assert settings.worker_block_milliseconds == 750
     assert settings.worker_lease_seconds == 600
     assert settings.max_attempts == 7
 
