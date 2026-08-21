@@ -2,16 +2,24 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from transcribe_ai_shared.database.models import JobType
+from transcribe_ai_shared.queue.models import ReceivedJobStreamMessage
 from transcribe_ai_shared.queue.protocols import TranscriptionStreams
-from transcribe_ai_shared.worker.exceptions import TranscriptionExecutionError
+from transcribe_ai_shared.worker.exceptions import (
+    TranscriptionExecutionError,
+    WorkerJobTypeMismatchError,
+)
 from transcribe_ai_shared.worker.models import (
     TranscriptionOutput,
     WorkerClaimRejected,
+    WorkerCompleted,
     WorkerIdle,
     WorkerProcessResult,
-    WorkerTranscribed,
 )
-from transcribe_ai_shared.worker.protocols import Transcriber, WorkerJobStore
+from transcribe_ai_shared.worker.protocols import (
+    Transcriber,
+    TranscriptionCompleter,
+    WorkerJobStore,
+)
 
 
 def _utc_now() -> datetime:
@@ -19,7 +27,7 @@ def _utc_now() -> datetime:
 
 
 class WorkerRuntime:
-    """Orchestre une consommation Redis, un claim durable et une transcription."""
+    """Orchestre le traitement durable d'un message de transcription."""
 
     def __init__(
         self,
@@ -27,6 +35,7 @@ class WorkerRuntime:
         streams: TranscriptionStreams,
         job_store: WorkerJobStore,
         transcriber: Transcriber,
+        completer: TranscriptionCompleter,
         job_type: JobType,
         group_name: str,
         worker_id: str,
@@ -43,6 +52,7 @@ class WorkerRuntime:
         self._streams = streams
         self._job_store = job_store
         self._transcriber = transcriber
+        self._completer = completer
         self._job_type = job_type
         self._group_name = group_name
         self._worker_id = worker_id
@@ -71,10 +81,25 @@ class WorkerRuntime:
         if message is None:
             return WorkerIdle()
 
+        return await self.process_message(message)
+
+    async def process_message(
+        self,
+        message: ReceivedJobStreamMessage,
+    ) -> WorkerClaimRejected | WorkerCompleted:
+        """Traite un message nouveau ou récupéré en respectant COMMIT puis ACK."""
+        if message.job_type is not self._job_type:
+            raise WorkerJobTypeMismatchError(
+                message.job_uuid,
+                self._job_type,
+                message.job_type,
+            )
+
         claimed_job = await self._job_store.claim(
             message.job_uuid,
             self._worker_id,
             self._lease_expires_at(),
+            message.attempt_count,
         )
         if claimed_job is None:
             removed = await self._streams.ack_and_delete(
@@ -98,10 +123,20 @@ class WorkerRuntime:
                 message.redis_message_id,
             ) from error
 
-        return WorkerTranscribed(
+        await self._completer.complete(
+            job=claimed_job,
+            worker_id=self._worker_id,
+            output=output,
+        )
+        removed = await self._streams.ack_and_delete(
+            self._group_name,
+            message,
+        )
+        return WorkerCompleted(
             message=message,
             job=claimed_job,
             output=output,
+            removed_from_stream=removed,
         )
 
     def _lease_expires_at(self) -> datetime:

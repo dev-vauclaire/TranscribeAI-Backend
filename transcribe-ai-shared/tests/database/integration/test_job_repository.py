@@ -407,6 +407,7 @@ async def test_claim_moves_a_queued_job_to_processing(
             job_uuid,
             "worker-fast-1",
             lease_expires_at,
+            0,
         )
 
     saved = await read_job(async_session_factory, job_uuid)
@@ -435,6 +436,7 @@ async def test_claim_refuses_a_job_that_is_not_queued(
             job_uuid,
             "worker-fast-1",
             NOW + timedelta(minutes=5),
+            0,
         )
 
     saved = await read_job(async_session_factory, job_uuid)
@@ -442,6 +444,32 @@ async def test_claim_refuses_a_job_that_is_not_queued(
     assert saved is not None
     assert saved.status is status
     assert saved.lease_owner is None
+
+
+async def test_claim_refuses_a_stale_attempt_without_mutating_the_job(
+    async_session_factory,
+) -> None:
+    job_uuid = await persist_job(
+        async_session_factory,
+        attempt_count=2,
+    )
+
+    async with async_session_factory.begin() as session:
+        claimed = await JobRepository(session).claim(
+            job_uuid,
+            "worker-fast-1",
+            NOW + timedelta(minutes=5),
+            1,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert claimed is None
+    assert saved is not None
+    assert saved.status is JobStatus.QUEUED
+    assert saved.attempt_count == 2
+    assert saved.lease_owner is None
+    assert saved.lease_expires_at is None
+    assert saved.started_at is None
 
 
 async def test_claim_is_atomic_between_two_workers(async_session_factory) -> None:
@@ -458,6 +486,7 @@ async def test_claim_is_atomic_between_two_workers(async_session_factory) -> Non
                 job_uuid,
                 worker_id,
                 lease_expires_at,
+                0,
             )
         return worker_id, lease_expires_at, claimed
 
@@ -489,6 +518,7 @@ async def test_claim_does_not_commit_the_callers_transaction(
                 job_uuid,
                 "worker-fast-1",
                 NOW + timedelta(minutes=5),
+                0,
             )
             assert claimed is not None
             raise RuntimeError("rollback requested")
@@ -513,6 +543,7 @@ async def test_claim_preserves_the_first_start_time(async_session_factory) -> No
             job_uuid,
             "worker-fast-1",
             NOW + timedelta(minutes=5),
+            0,
         )
 
     saved = await read_job(async_session_factory, job_uuid)
@@ -703,6 +734,7 @@ async def test_mutations_refuse_an_unknown_job(async_session_factory) -> None:
             unknown_uuid,
             "worker-fast-1",
             NOW + timedelta(minutes=5),
+            0,
         )
         renewed = await repository.renew_lease(
             unknown_uuid,

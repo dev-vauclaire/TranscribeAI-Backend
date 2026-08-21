@@ -39,12 +39,13 @@ class WorkerClaimRejected:
 
 
 @dataclass(frozen=True, slots=True)
-class WorkerTranscribed:
-    """Conserve le contexte requis par la future étape de finalisation atomique."""
+class WorkerCompleted:
+    """Indique que le résultat est durable après la tentative d'ACK Redis."""
 
     message: ReceivedJobStreamMessage
     job: ClaimedJob
     output: TranscriptionOutput
+    removed_from_stream: bool
 
 
-type WorkerProcessResult = WorkerIdle | WorkerClaimRejected | WorkerTranscribed
+type WorkerProcessResult = WorkerIdle | WorkerClaimRejected | WorkerCompleted

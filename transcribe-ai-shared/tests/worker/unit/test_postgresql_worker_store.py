@@ -24,6 +24,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 JOB_UUID = UUID("12345678-1234-5678-1234-567812345678")
 OTHER_JOB_UUID = UUID("87654321-4321-8765-4321-876543218765")
 LEASE_EXPIRES_AT = datetime(2026, 8, 21, 12, 5, tzinfo=UTC)
+EXPECTED_ATTEMPT_COUNT = 3
 
 
 class RecordingRepository:
@@ -36,16 +37,19 @@ class RecordingRepository:
         self.session = session
         self.outcome = outcome
         self.events = events
-        self.calls: list[tuple[UUID, str, datetime]] = []
+        self.calls: list[tuple[UUID, str, datetime, int]] = []
 
     async def claim(
         self,
         job_uuid: UUID,
         worker_id: str,
         lease_expires_at: datetime,
+        expected_attempt_count: int,
     ) -> TranscriptionJob | None:
         self.events.append("claim")
-        self.calls.append((job_uuid, worker_id, lease_expires_at))
+        self.calls.append(
+            (job_uuid, worker_id, lease_expires_at, expected_attempt_count)
+        )
         return self.outcome
 
 
@@ -84,12 +88,17 @@ async def test_claim_commits_before_returning_a_detached_snapshot(
         repository_factory=lambda received_session: repository,
     )
 
-    claimed = await store.claim(JOB_UUID, "worker-fast-1", LEASE_EXPIRES_AT)
+    claimed = await store.claim(
+        JOB_UUID,
+        "worker-fast-1",
+        LEASE_EXPIRES_AT,
+        EXPECTED_ATTEMPT_COUNT,
+    )
 
     assert events == ["transaction_enter", "claim", "transaction_commit"]
     assert repository.session is session
     assert repository.calls == [
-        (JOB_UUID, "worker-fast-1", LEASE_EXPIRES_AT),
+        (JOB_UUID, "worker-fast-1", LEASE_EXPIRES_AT, EXPECTED_ATTEMPT_COUNT),
     ]
     assert claimed == ClaimedJob(
         job_uuid=JOB_UUID,
@@ -124,10 +133,23 @@ async def test_rejected_claim_commits_the_short_no_op_transaction(
         repository_factory=lambda _session: repository,
     )
 
-    claimed = await store.claim(JOB_UUID, "worker-fast-1", LEASE_EXPIRES_AT)
+    claimed = await store.claim(
+        JOB_UUID,
+        "worker-fast-1",
+        LEASE_EXPIRES_AT,
+        EXPECTED_ATTEMPT_COUNT,
+    )
 
     assert claimed is None
     assert events == ["transaction_enter", "claim", "transaction_commit"]
+    assert repository.calls == [
+        (
+            JOB_UUID,
+            "worker-fast-1",
+            LEASE_EXPIRES_AT,
+            EXPECTED_ATTEMPT_COUNT,
+        )
+    ]
 
 
 async def test_invalid_audio_location_rolls_back_the_claim(
@@ -163,7 +185,12 @@ async def test_invalid_audio_location_rolls_back_the_claim(
     )
 
     with pytest.raises(InvalidAudioLocationError, match="correspond"):
-        await store.claim(JOB_UUID, "worker-fast-1", LEASE_EXPIRES_AT)
+        await store.claim(
+            JOB_UUID,
+            "worker-fast-1",
+            LEASE_EXPIRES_AT,
+            EXPECTED_ATTEMPT_COUNT,
+        )
 
     assert events == ["transaction_enter", "claim", "transaction_rollback"]
 
@@ -201,7 +228,12 @@ async def test_mismatched_job_type_rolls_back_the_claim(
     )
 
     with pytest.raises(WorkerJobTypeMismatchError) as raised:
-        await store.claim(JOB_UUID, "worker-fast-1", LEASE_EXPIRES_AT)
+        await store.claim(
+            JOB_UUID,
+            "worker-fast-1",
+            LEASE_EXPIRES_AT,
+            EXPECTED_ATTEMPT_COUNT,
+        )
 
     assert raised.value.job_uuid == JOB_UUID
     assert raised.value.expected_job_type is JobType.FAST

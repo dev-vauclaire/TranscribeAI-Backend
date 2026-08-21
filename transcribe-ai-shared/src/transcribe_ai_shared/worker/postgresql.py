@@ -25,6 +25,7 @@ class _ClaimRepository(Protocol):
         job_uuid: UUID,
         worker_id: str,
         lease_expires_at: datetime,
+        expected_attempt_count: int,
     ) -> TranscriptionJob | None: ...
 
 
@@ -52,11 +53,17 @@ class PostgresWorkerJobStore(WorkerJobStore):
         job_uuid: UUID,
         worker_id: str,
         lease_expires_at: datetime,
+        expected_attempt_count: int,
     ) -> ClaimedJob | None:
         """Committe le claim avant de rendre un snapshot sans session au runtime."""
         async with async_transaction(self._session_factory) as session:
             repository = self._repository_factory(session)
-            job = await repository.claim(job_uuid, worker_id, lease_expires_at)
+            job = await repository.claim(
+                job_uuid,
+                worker_id,
+                lease_expires_at,
+                expected_attempt_count,
+            )
             if job is None:
                 return None
             if job.job_type is not self._expected_job_type:

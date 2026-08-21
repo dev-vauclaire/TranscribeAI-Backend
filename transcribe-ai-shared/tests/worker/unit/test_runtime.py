@@ -12,14 +12,17 @@ from transcribe_ai_shared import (
     JobType,
     ReceivedJobStreamMessage,
     Transcriber,
+    TranscriptionCompleter,
+    TranscriptionCompletionError,
     TranscriptionExecutionError,
     TranscriptionOutput,
     TranscriptionStreams,
     WorkerClaimRejected,
+    WorkerCompleted,
     WorkerIdle,
     WorkerJobStore,
+    WorkerJobTypeMismatchError,
     WorkerRuntime,
-    WorkerTranscribed,
 )
 from transcribe_ai_shared.worker.testing import FakeTranscriber
 
@@ -113,18 +116,51 @@ class RecordingJobStore:
     ) -> None:
         self.claimed_job = claimed_job
         self.events = events
-        self.claim_calls: list[tuple[UUID, str, datetime]] = []
+        self.claim_calls: list[tuple[UUID, str, datetime, int]] = []
 
     async def claim(
         self,
         job_uuid: UUID,
         worker_id: str,
         lease_expires_at: datetime,
+        expected_attempt_count: int,
     ) -> ClaimedJob | None:
         if self.events is not None:
             self.events.append("claim")
-        self.claim_calls.append((job_uuid, worker_id, lease_expires_at))
+        self.claim_calls.append(
+            (
+                job_uuid,
+                worker_id,
+                lease_expires_at,
+                expected_attempt_count,
+            )
+        )
         return self.claimed_job
+
+
+class RecordingCompleter:
+    def __init__(
+        self,
+        *,
+        error: Exception | None = None,
+        events: list[str] | None = None,
+    ) -> None:
+        self.error = error
+        self.events = events
+        self.calls: list[tuple[ClaimedJob, str, TranscriptionOutput]] = []
+
+    async def complete(
+        self,
+        *,
+        job: ClaimedJob,
+        worker_id: str,
+        output: TranscriptionOutput,
+    ) -> None:
+        if self.events is not None:
+            self.events.append("complete")
+        self.calls.append((job, worker_id, output))
+        if self.error is not None:
+            raise self.error
 
 
 class BlockingTranscriber:
@@ -146,12 +182,14 @@ def make_runtime(
     store: RecordingJobStore,
     transcriber: Transcriber,
     *,
+    completer: TranscriptionCompleter | None = None,
     clock=lambda: NOW,
 ) -> WorkerRuntime:
     return WorkerRuntime(
         streams=cast(TranscriptionStreams, streams),
         job_store=cast(WorkerJobStore, store),
         transcriber=transcriber,
+        completer=completer or RecordingCompleter(),
         job_type=JobType.FAST,
         group_name=GROUP_NAME,
         worker_id=WORKER_ID,
@@ -177,8 +215,14 @@ async def test_process_next_returns_idle_when_no_message_is_available() -> None:
     streams = RecordingStreams()
     store = RecordingJobStore(make_claimed_job())
     transcriber = FakeTranscriber()
+    completer = RecordingCompleter()
 
-    result = await make_runtime(streams, store, transcriber).process_next(
+    result = await make_runtime(
+        streams,
+        store,
+        transcriber,
+        completer=completer,
+    ).process_next(
         block_milliseconds=250,
     )
 
@@ -186,16 +230,18 @@ async def test_process_next_returns_idle_when_no_message_is_available() -> None:
     assert streams.consume_calls == [(JobType.FAST, GROUP_NAME, WORKER_ID, 250)]
     assert store.claim_calls == []
     assert transcriber.calls == ()
+    assert completer.calls == []
     assert streams.ack_calls == []
 
 
-async def test_valid_message_is_claimed_then_transcribed_without_ack() -> None:
+async def test_valid_message_is_transcribed_completed_then_acked() -> None:
     events: list[str] = []
     message = make_message()
     claimed_job = make_claimed_job()
     streams = RecordingStreams(message, events=events)
     store = RecordingJobStore(claimed_job, events=events)
     output = TranscriptionOutput(result={"text": "hello"})
+    completer = RecordingCompleter(events=events)
 
     class EventTranscriber:
         async def transcribe(
@@ -210,26 +256,95 @@ async def test_valid_message_is_claimed_then_transcribed_without_ack() -> None:
         streams,
         store,
         EventTranscriber(),
+        completer=completer,
     ).process_next()
 
-    assert result == WorkerTranscribed(message, claimed_job, output)
-    assert events == ["consume", "claim", "transcribe"]
-    assert store.claim_calls == [
-        (JOB_UUID, WORKER_ID, NOW + LEASE_DURATION),
+    assert result == WorkerCompleted(
+        message,
+        claimed_job,
+        output,
+        removed_from_stream=True,
+    )
+    assert events == [
+        "consume",
+        "claim",
+        "transcribe",
+        "complete",
+        "ack_and_delete",
     ]
+    assert store.claim_calls == [
+        (JOB_UUID, WORKER_ID, NOW + LEASE_DURATION, 2),
+    ]
+    assert completer.calls == [(claimed_job, WORKER_ID, output)]
+    assert streams.ack_calls == [(GROUP_NAME, message)]
+
+
+async def test_completed_result_exposes_when_redis_entry_was_already_absent() -> None:
+    message = make_message()
+    claimed_job = make_claimed_job()
+    output = TranscriptionOutput(result={"text": "hello"})
+    streams = RecordingStreams(message, ack_result=False)
+
+    result = await make_runtime(
+        streams,
+        RecordingJobStore(claimed_job),
+        FakeTranscriber(output),
+    ).process_next()
+
+    assert result == WorkerCompleted(
+        message,
+        claimed_job,
+        output,
+        removed_from_stream=False,
+    )
+    assert streams.ack_calls == [(GROUP_NAME, message)]
+
+
+async def test_recovered_message_from_another_stream_is_rejected_without_ack() -> None:
+    message = ReceivedJobStreamMessage(
+        redis_message_id=REDIS_MESSAGE_ID,
+        job_uuid=JOB_UUID,
+        job_type=JobType.BATCH,
+        attempt_count=2,
+    )
+    streams = RecordingStreams(message)
+    store = RecordingJobStore(make_claimed_job())
+    transcriber = FakeTranscriber()
+    completer = RecordingCompleter()
+
+    with pytest.raises(WorkerJobTypeMismatchError) as raised:
+        await make_runtime(
+            streams,
+            store,
+            transcriber,
+            completer=completer,
+        ).process_next()
+
+    assert raised.value.expected_job_type is JobType.FAST
+    assert raised.value.actual_job_type is JobType.BATCH
+    assert store.claim_calls == []
+    assert transcriber.calls == ()
+    assert completer.calls == []
     assert streams.ack_calls == []
 
 
-async def test_rejected_claim_is_acked_without_calling_the_transcriber() -> None:
+async def test_claim_refused_for_completed_job_is_acked_without_inference() -> None:
     message = make_message()
     streams = RecordingStreams(message)
     store = RecordingJobStore(None)
     transcriber = FakeTranscriber()
+    completer = RecordingCompleter()
 
-    result = await make_runtime(streams, store, transcriber).process_next()
+    result = await make_runtime(
+        streams,
+        store,
+        transcriber,
+        completer=completer,
+    ).process_next()
 
     assert result == WorkerClaimRejected(message, removed_from_stream=True)
     assert transcriber.calls == ()
+    assert completer.calls == []
     assert streams.ack_calls == [(GROUP_NAME, message)]
 
 
@@ -238,14 +353,21 @@ async def test_missing_job_uses_the_same_safe_path_as_any_rejected_claim() -> No
     streams = RecordingStreams(message_for_missing_job, ack_result=False)
     store = RecordingJobStore(None)
     transcriber = FakeTranscriber()
+    completer = RecordingCompleter()
 
-    result = await make_runtime(streams, store, transcriber).process_next()
+    result = await make_runtime(
+        streams,
+        store,
+        transcriber,
+        completer=completer,
+    ).process_next()
 
     assert result == WorkerClaimRejected(
         message_for_missing_job,
         removed_from_stream=False,
     )
     assert transcriber.calls == ()
+    assert completer.calls == []
     assert streams.ack_calls == [(GROUP_NAME, message_for_missing_job)]
 
 
@@ -257,13 +379,20 @@ async def test_invalid_payload_error_is_propagated_before_postgres_access() -> N
     streams = RecordingStreams(consume_error=error)
     store = RecordingJobStore(make_claimed_job())
     transcriber = FakeTranscriber()
+    completer = RecordingCompleter()
 
     with pytest.raises(InvalidJobStreamMessageError) as raised:
-        await make_runtime(streams, store, transcriber).process_next()
+        await make_runtime(
+            streams,
+            store,
+            transcriber,
+            completer=completer,
+        ).process_next()
 
     assert raised.value is error
     assert store.claim_calls == []
     assert transcriber.calls == ()
+    assert completer.calls == []
     assert streams.ack_calls == []
 
 
@@ -272,40 +401,73 @@ async def test_transcriber_error_is_classified_and_never_acknowledged() -> None:
     cause = RuntimeError("model unavailable")
     streams = RecordingStreams(message)
     transcriber = FakeTranscriber(error=cause)
+    completer = RecordingCompleter()
 
     with pytest.raises(TranscriptionExecutionError) as raised:
         await make_runtime(
             streams,
             RecordingJobStore(make_claimed_job()),
             transcriber,
+            completer=completer,
         ).process_next()
 
     assert raised.value.job_uuid == JOB_UUID
     assert raised.value.redis_message_id == REDIS_MESSAGE_ID
     assert raised.value.__cause__ is cause
     assert transcriber.calls == (AudioLocation(f"{JOB_UUID}/input.wav"),)
+    assert completer.calls == []
+    assert streams.ack_calls == []
+
+
+async def test_completion_failure_is_propagated_without_ack() -> None:
+    message = make_message()
+    streams = RecordingStreams(message)
+    transcriber = FakeTranscriber(TranscriptionOutput(result={"text": "completed"}))
+    error = TranscriptionCompletionError(JOB_UUID)
+    completer = RecordingCompleter(error=error)
+
+    with pytest.raises(TranscriptionCompletionError) as raised:
+        await make_runtime(
+            streams,
+            RecordingJobStore(make_claimed_job()),
+            transcriber,
+            completer=completer,
+        ).process_next()
+
+    assert raised.value is error
+    assert completer.calls == [
+        (
+            make_claimed_job(),
+            WORKER_ID,
+            TranscriptionOutput(result={"text": "completed"}),
+        )
+    ]
     assert streams.ack_calls == []
 
 
 async def test_message_is_not_acked_while_transcription_is_in_progress() -> None:
     streams = RecordingStreams(make_message())
     transcriber = BlockingTranscriber()
+    completer = RecordingCompleter()
     runtime = make_runtime(
         streams,
         RecordingJobStore(make_claimed_job()),
         transcriber,
+        completer=completer,
     )
 
     task = asyncio.create_task(runtime.process_next())
     await transcriber.started.wait()
 
     assert task.done() is False
+    assert completer.calls == []
     assert streams.ack_calls == []
 
     transcriber.release.set()
     result = await task
-    assert isinstance(result, WorkerTranscribed)
-    assert streams.ack_calls == []
+    assert isinstance(result, WorkerCompleted)
+    assert len(completer.calls) == 1
+    assert streams.ack_calls == [(GROUP_NAME, make_message())]
 
 
 async def test_lease_expiry_is_normalized_to_utc() -> None:
@@ -326,7 +488,7 @@ async def test_lease_expiry_is_normalized_to_utc() -> None:
     ).process_next()
 
     assert store.claim_calls == [
-        (JOB_UUID, WORKER_ID, NOW + LEASE_DURATION),
+        (JOB_UUID, WORKER_ID, NOW + LEASE_DURATION, 2),
     ]
 
 
@@ -363,6 +525,7 @@ async def test_runtime_rejects_invalid_identity_or_lease(
         "streams": cast(TranscriptionStreams, RecordingStreams()),
         "job_store": cast(WorkerJobStore, RecordingJobStore(None)),
         "transcriber": FakeTranscriber(),
+        "completer": cast(TranscriptionCompleter, RecordingCompleter()),
         "job_type": JobType.FAST,
         "group_name": GROUP_NAME,
         "worker_id": WORKER_ID,

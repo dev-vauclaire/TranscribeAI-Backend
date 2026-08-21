@@ -117,11 +117,11 @@ persisté dans `TranscriptionJob.audio_uri`.
 - Le point de composition qui crée un `TranscriptionStreams` doit appeler
   `aclose()` lors de son arrêt afin de libérer le pool de connexions Redis.
 - `WorkerRuntime` orchestre une seule itération commune à FAST et BATCH :
-  consommation d'un message, claim PostgreSQL atomique, puis appel du
-  `Transcriber` injecté. `run_worker` porte la boucle, la composition et la
-  fermeture des ressources communes ; chaque application choisit uniquement
-  son `JobType` et son moteur. Le moteur ML pourra ainsi rester chargé entre
-  deux messages.
+  consommation d'un message, claim PostgreSQL atomique, appel du `Transcriber`,
+  finalisation PostgreSQL, puis ACK Redis. `run_worker` porte la boucle, la
+  composition et la fermeture des ressources communes ; chaque application
+  choisit uniquement son `JobType` et son moteur. Le moteur ML pourra ainsi
+  rester chargé entre deux messages.
 - `PostgresWorkerJobStore` committe le claim dans une transaction courte avant
   de rendre un snapshot détaché au runtime. Aucune transaction PostgreSQL ne
   reste donc ouverte pendant le traitement audio. Il vérifie aussi, avant le
@@ -130,20 +130,26 @@ persisté dans `TranscriptionJob.audio_uri`.
   moteur.
 - Un claim refusé couvre aussi bien un UUID inexistant qu'un doublon ou un job
   déjà traité : le runtime acquitte et supprime alors le message sans appeler
-  le transcriber. Après un claim réussi, aucun ACK n'est encore effectué, même
-  lorsque le fake retourne un résultat. Le runtime n'enchaîne pas encore la
-  finalisation ci-dessous ni l'ACK final, qui appartiendra à une prochaine
-  étape d'orchestration.
+  le transcriber. Le claim compare également l'`attempt_count` porté par Redis :
+  un message d'une ancienne tentative est donc supprimé sans relancer
+  l'inférence.
 - `TranscriptionCompletionService` ajoute le résultat puis confirme par
   comparaison la tentative toujours détenue par le worker. Les deux écritures
   partagent une même session et un même commit ; un refus du CAS ou une erreur
   antérieure au commit annule la transaction entière. Une erreur pendant le
   commit peut laisser son résultat inconnu de l'appelant : le service remonte
-  alors l'échec et l'absence d'ACK permet une redélivrance sûre. Ce service ne
-  connaît pas Redis et n'effectue donc aucun ACK.
+  alors l'échec et le runtime n'effectue aucun ACK. Après un commit confirmé,
+  le runtime appelle seulement alors `ack_and_delete`. Une panne à cette
+  dernière frontière laisse un job `COMPLETED` et un message pending ; lors de
+  sa récupération, le claim est refusé et le message est supprimé sans seconde
+  inférence. Le service de finalisation ne connaît pas Redis.
 - Un payload invalide ou une exception du transcriber reste dans la PEL. Cette
-  étape ne définit volontairement ni poison queue, ni retry métier, ni
-  `XAUTOCLAIM` automatique.
+  étape ne définit volontairement ni poison queue, ni retry métier, ni politique
+  `XAUTOCLAIM` automatique. `WorkerRuntime.process_message()` permet toutefois
+  de traiter par le même chemin un message récupéré avec cette primitive. Le
+  composant qui déclenchera cette récupération devra encore distinguer un job
+  terminal ou une tentative obsolète d'un job `PROCESSING` dont le lease est
+  toujours valide ; cette politique de reprise n'appartient pas à cette étape.
 - `FakeTranscriber` est disponible uniquement depuis le module explicite
   `transcribe_ai_shared.worker.testing`. Les applications refusent de
   l'activer sans un opt-in d'environnement de développement.

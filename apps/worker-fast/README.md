@@ -3,8 +3,9 @@
 Cette application consomme les nouveaux messages du stream
 `transcription:fast` un par un, tente leur claim PostgreSQL puis délègue le
 traitement au transcriber injecté. La boucle conserve les connexions et le
-transcriber entre deux messages. Elle ne contient aucune logique HTTP et
-n'implémente pas encore la finalisation, le retry ou le moteur ML réel.
+transcriber entre deux messages. Après une inférence réussie, le résultat et
+l'état `COMPLETED` sont committés ensemble avant l'ACK Redis. Elle ne contient
+aucune logique HTTP et n'implémente pas encore le retry ou le moteur ML réel.
 
 ## Exécution de développement
 

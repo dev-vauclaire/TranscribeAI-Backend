@@ -30,6 +30,7 @@ from transcribe_ai_shared import (
     StorageSettings,
     TranscriptionDirectory,
     Transcriber,
+    TranscriptionCompleter,
     TranscriptionCompletionError,
     TranscriptionCompletionRejectedError,
     TranscriptionCompletionService,
@@ -42,13 +43,13 @@ from transcribe_ai_shared import (
     TranscriptionStreamName,
     TranscriptionStreams,
     WorkerClaimRejected,
+    WorkerCompleted,
     WorkerIdle,
     WorkerJobStore,
     WorkerJobTypeMismatchError,
     WorkerProcessResult,
     WorkerRuntime,
     WorkerSettings,
-    WorkerTranscribed,
     async_transaction,
     check_postgres_connection,
     create_async_db_engine,
@@ -94,6 +95,7 @@ def test_supported_public_imports_are_available():
     assert StorageSettings is not None
     assert TranscriptionDirectory is not None
     assert Transcriber is not None
+    assert TranscriptionCompleter is not None
     assert TranscriptionCompletionError is not None
     assert TranscriptionCompletionRejectedError is not None
     assert TranscriptionCompletionService is not None
@@ -106,13 +108,13 @@ def test_supported_public_imports_are_available():
     assert TranscriptionStreamName is not None
     assert TranscriptionStreams is not None
     assert WorkerClaimRejected is not None
+    assert WorkerCompleted is not None
     assert WorkerIdle is not None
     assert WorkerJobStore is not None
     assert WorkerJobTypeMismatchError is not None
     assert WorkerProcessResult is not None
     assert WorkerRuntime is not None
     assert WorkerSettings is not None
-    assert WorkerTranscribed is not None
     assert async_transaction is not None
     assert check_postgres_connection is not None
     assert create_async_db_engine is not None

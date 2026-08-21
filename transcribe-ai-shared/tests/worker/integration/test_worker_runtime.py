@@ -13,14 +13,17 @@ from transcribe_ai_shared import (
     JobStreamMessage,
     JobType,
     PostgresWorkerJobStore,
+    ResultRepository,
+    TranscriptionCompletionService,
     TranscriptionJob,
     TranscriptionOutput,
+    TranscriptionResult,
     TranscriptionStreams,
     WorkerClaimRejected,
+    WorkerCompleted,
     WorkerJobStore,
     WorkerJobTypeMismatchError,
     WorkerRuntime,
-    WorkerTranscribed,
     async_transaction,
 )
 from transcribe_ai_shared.worker.testing import FakeTranscriber
@@ -69,18 +72,27 @@ async def load_job(
         return job
 
 
+async def load_result(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> TranscriptionResult | None:
+    async with session_factory() as session:
+        return await ResultRepository(session).get_by_job_uuid(JOB_UUID)
+
+
 def make_runtime(
     *,
     streams: TranscriptionStreams,
     job_store: WorkerJobStore,
     transcriber: FakeTranscriber,
     worker_id: str,
+    session_factory: async_sessionmaker[AsyncSession],
     job_type: JobType = JobType.FAST,
 ) -> WorkerRuntime:
     return WorkerRuntime(
         streams=streams,
         job_store=job_store,
         transcriber=transcriber,
+        completer=TranscriptionCompletionService(session_factory),
         job_type=job_type,
         group_name=GROUP_NAME,
         worker_id=worker_id,
@@ -103,6 +115,7 @@ class SynchronizedClaimStore:
         job_uuid: UUID,
         worker_id: str,
         lease_expires_at: datetime,
+        expected_attempt_count: int,
     ) -> ClaimedJob | None:
         async with self._lock:
             self.claim_call_count += 1
@@ -116,6 +129,7 @@ class SynchronizedClaimStore:
             job_uuid,
             worker_id,
             lease_expires_at,
+            expected_attempt_count,
         )
 
 
@@ -126,7 +140,7 @@ class SynchronizedClaimStore:
         (JobType.BATCH, BATCH_STREAM, "worker-batch-1"),
     ],
 )
-async def test_process_next_claims_and_transcribes_without_premature_ack(
+async def test_process_next_commits_completion_before_acknowledging(
     async_session_factory: async_sessionmaker[AsyncSession],
     worker_redis: WorkerRedisContext,
     job_type: JobType,
@@ -144,6 +158,7 @@ async def test_process_next_claims_and_transcribes_without_premature_ack(
         ),
         transcriber=transcriber,
         worker_id=worker_id,
+        session_factory=async_session_factory,
         job_type=job_type,
     )
     await runtime.initialize()
@@ -157,7 +172,7 @@ async def test_process_next_claims_and_transcribes_without_premature_ack(
 
     result = await runtime.process_next(block_milliseconds=100)
 
-    assert isinstance(result, WorkerTranscribed)
+    assert isinstance(result, WorkerCompleted)
     assert result.message.redis_message_id == redis_message_id
     assert result.job == ClaimedJob(
         job_uuid=JOB_UUID,
@@ -166,26 +181,21 @@ async def test_process_next_claims_and_transcribes_without_premature_ack(
         audio_location=AudioLocation(f"{JOB_UUID}/input.wav"),
     )
     assert result.output == output
+    assert result.removed_from_stream is True
     assert transcriber.calls == (AudioLocation(f"{JOB_UUID}/input.wav"),)
 
     saved_job = await load_job(async_session_factory)
-    assert saved_job.status is JobStatus.PROCESSING
+    assert saved_job.status is JobStatus.COMPLETED
     assert saved_job.lease_owner == worker_id
     assert saved_job.lease_expires_at == NOW + LEASE_DURATION
     assert saved_job.started_at is not None
+    saved_result = await load_result(async_session_factory)
+    assert saved_result is not None
+    assert saved_result.result == {"text": "bonjour"}
 
     pending = await worker_redis.client.xpending(stream_name, GROUP_NAME)
-    assert pending["pending"] == 1
-    assert pending["min"] == redis_message_id
-    assert await worker_redis.client.xrange(stream_name) == [
-        (
-            redis_message_id,
-            {
-                "job_uuid": str(JOB_UUID),
-                "attempt_count": "0",
-            },
-        )
-    ]
+    assert pending["pending"] == 0
+    assert await worker_redis.client.xrange(stream_name) == []
 
 
 async def test_duplicate_messages_allow_only_one_concurrent_claim_and_transcription(
@@ -205,12 +215,14 @@ async def test_duplicate_messages_allow_only_one_concurrent_claim_and_transcript
         job_store=synchronized_store,
         transcriber=transcriber,
         worker_id=FIRST_WORKER_ID,
+        session_factory=async_session_factory,
     )
     second_runtime = make_runtime(
         streams=worker_redis.streams,
         job_store=synchronized_store,
         transcriber=transcriber,
         worker_id=SECOND_WORKER_ID,
+        session_factory=async_session_factory,
     )
     await first_runtime.initialize()
     await second_runtime.initialize()
@@ -231,7 +243,7 @@ async def test_duplicate_messages_allow_only_one_concurrent_claim_and_transcript
 
     results = (first_result, second_result)
     transcribed_results = [
-        result for result in results if isinstance(result, WorkerTranscribed)
+        result for result in results if isinstance(result, WorkerCompleted)
     ]
     rejected_results = [
         result for result in results if isinstance(result, WorkerClaimRejected)
@@ -250,34 +262,22 @@ async def test_duplicate_messages_allow_only_one_concurrent_claim_and_transcript
 
     winning_worker_id = (
         FIRST_WORKER_ID
-        if isinstance(first_result, WorkerTranscribed)
+        if isinstance(first_result, WorkerCompleted)
         else SECOND_WORKER_ID
     )
     saved_job = await load_job(async_session_factory)
-    assert saved_job.status is JobStatus.PROCESSING
+    assert saved_job.status is JobStatus.COMPLETED
     assert saved_job.lease_owner == winning_worker_id
     assert saved_job.lease_expires_at == NOW + LEASE_DURATION
     assert saved_job.attempt_count == 0
 
-    pending_entries = await worker_redis.client.xpending_range(
-        FAST_STREAM,
-        GROUP_NAME,
-        min="-",
-        max="+",
-        count=10,
-    )
-    assert len(pending_entries) == 1
-    assert pending_entries[0]["message_id"] == transcribed.message.redis_message_id
-    assert pending_entries[0]["consumer"] == winning_worker_id
-    assert await worker_redis.client.xrange(FAST_STREAM) == [
-        (
-            transcribed.message.redis_message_id,
-            {
-                "job_uuid": str(JOB_UUID),
-                "attempt_count": "0",
-            },
-        )
-    ]
+    assert transcribed.removed_from_stream is True
+    saved_result = await load_result(async_session_factory)
+    assert saved_result is not None
+    assert saved_result.result == {"text": "fake transcription"}
+    pending = await worker_redis.client.xpending(FAST_STREAM, GROUP_NAME)
+    assert pending["pending"] == 0
+    assert await worker_redis.client.xrange(FAST_STREAM) == []
 
 
 async def test_job_from_another_type_is_not_processed_by_the_wrong_stream(
@@ -298,6 +298,7 @@ async def test_job_from_another_type_is_not_processed_by_the_wrong_stream(
         ),
         transcriber=transcriber,
         worker_id=FIRST_WORKER_ID,
+        session_factory=async_session_factory,
     )
     await runtime.initialize()
     redis_message_id = await worker_redis.streams.publish(

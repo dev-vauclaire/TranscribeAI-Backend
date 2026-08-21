@@ -123,13 +123,15 @@ class JobRepository:
         job_uuid: UUID,
         worker_id: str,
         lease_expires_at: datetime,
+        expected_attempt_count: int,
     ) -> TranscriptionJob | None:
-        """Réserve atomiquement un job encore en attente pour un worker."""
+        """Réserve atomiquement la tentative encore attendue par le worker."""
         statement = (
             update(TranscriptionJob)
             .where(
                 TranscriptionJob.job_uuid == job_uuid,
                 TranscriptionJob.status == JobStatus.QUEUED,
+                TranscriptionJob.attempt_count == expected_attempt_count,
             )
             .values(
                 status=JobStatus.PROCESSING,

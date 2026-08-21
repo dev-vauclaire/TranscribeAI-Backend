@@ -25,6 +25,21 @@ class WorkerJobStore(Protocol):
         job_uuid: UUID,
         worker_id: str,
         lease_expires_at: datetime,
+        expected_attempt_count: int,
     ) -> ClaimedJob | None:
         """Réserve atomiquement un job ou refuse un message devenu obsolète."""
+        ...
+
+
+class TranscriptionCompleter(Protocol):
+    """Port de finalisation durable appelé après une inférence réussie."""
+
+    async def complete(
+        self,
+        *,
+        job: ClaimedJob,
+        worker_id: str,
+        output: TranscriptionOutput,
+    ) -> None:
+        """Persiste le résultat et l'état terminal avant tout ACK Redis."""
         ...

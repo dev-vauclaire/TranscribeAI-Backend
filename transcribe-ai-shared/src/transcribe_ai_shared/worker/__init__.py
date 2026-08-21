@@ -10,12 +10,16 @@ from transcribe_ai_shared.worker.models import (
     ClaimedJob,
     TranscriptionOutput,
     WorkerClaimRejected,
+    WorkerCompleted,
     WorkerIdle,
     WorkerProcessResult,
-    WorkerTranscribed,
 )
 from transcribe_ai_shared.worker.postgresql import PostgresWorkerJobStore
-from transcribe_ai_shared.worker.protocols import Transcriber, WorkerJobStore
+from transcribe_ai_shared.worker.protocols import (
+    Transcriber,
+    TranscriptionCompleter,
+    WorkerJobStore,
+)
 from transcribe_ai_shared.worker.runtime import WorkerRuntime
 from transcribe_ai_shared.worker.worker_settings import WorkerSettings
 
@@ -23,18 +27,19 @@ __all__ = [
     "ClaimedJob",
     "PostgresWorkerJobStore",
     "Transcriber",
+    "TranscriptionCompleter",
     "TranscriptionCompletionError",
     "TranscriptionCompletionRejectedError",
     "TranscriptionCompletionService",
     "TranscriptionExecutionError",
     "TranscriptionOutput",
     "WorkerClaimRejected",
+    "WorkerCompleted",
     "WorkerIdle",
     "WorkerJobStore",
     "WorkerJobTypeMismatchError",
     "WorkerProcessResult",
     "WorkerRuntime",
     "WorkerSettings",
-    "WorkerTranscribed",
     "run_worker",
 ]
