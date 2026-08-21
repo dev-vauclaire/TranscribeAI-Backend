@@ -35,3 +35,29 @@ class WorkerJobTypeMismatchError(RuntimeError):
             f"Le job {job_uuid} est de type {actual_job_type.value}, "
             f"mais le worker consomme le stream {expected_job_type.value}."
         )
+
+
+class TranscriptionCompletionError(RuntimeError):
+    """Signale une panne SQLAlchemy pendant la finalisation atomique d'un job."""
+
+    def __init__(self, job_uuid: UUID) -> None:
+        self.job_uuid = job_uuid
+        super().__init__(f"La finalisation du job {job_uuid} a échoué.")
+
+
+class TranscriptionCompletionRejectedError(RuntimeError):
+    """Signale que le worker ne possède plus la tentative à finaliser."""
+
+    def __init__(
+        self,
+        job_uuid: UUID,
+        worker_id: str,
+        expected_attempt_count: int,
+    ) -> None:
+        self.worker_id = worker_id
+        self.expected_attempt_count = expected_attempt_count
+        self.job_uuid = job_uuid
+        super().__init__(
+            f"La finalisation du job {job_uuid} a été refusée pour le worker "
+            f"{worker_id} et la tentative {expected_attempt_count}."
+        )

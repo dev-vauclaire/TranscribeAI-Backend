@@ -1,5 +1,8 @@
 from transcribe_ai_shared.worker.application import run_worker
+from transcribe_ai_shared.worker.completion import TranscriptionCompletionService
 from transcribe_ai_shared.worker.exceptions import (
+    TranscriptionCompletionError,
+    TranscriptionCompletionRejectedError,
     TranscriptionExecutionError,
     WorkerJobTypeMismatchError,
 )
@@ -20,6 +23,9 @@ __all__ = [
     "ClaimedJob",
     "PostgresWorkerJobStore",
     "Transcriber",
+    "TranscriptionCompletionError",
+    "TranscriptionCompletionRejectedError",
+    "TranscriptionCompletionService",
     "TranscriptionExecutionError",
     "TranscriptionOutput",
     "WorkerClaimRejected",

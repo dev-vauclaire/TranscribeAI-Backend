@@ -3,13 +3,14 @@ from datetime import datetime
 from itertools import batched
 from uuid import UUID
 
-from sqlalchemy import func, literal, select, update
+from sqlalchemy import exists, func, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from transcribe_ai_shared.database.models import (
     JobStatus,
     TranscriptionJob,
+    TranscriptionResult,
 )
 
 
@@ -234,14 +235,24 @@ class JobRepository:
         self,
         job_uuid: UUID,
         worker_id: str,
+        expected_attempt_count: int,
     ) -> bool:
-        """Termine avec succès uniquement le job détenu par le worker indiqué."""
+        """Termine la tentative détenue seulement si son résultat existe.
+
+        La vérification du résultat protège l'invariant applicatif selon lequel
+        un job ``COMPLETED`` possède son unique résultat durable. L'appelant
+        doit donc insérer ce résultat dans la même transaction avant l'UPDATE.
+        """
         statement = (
             update(TranscriptionJob)
             .where(
                 TranscriptionJob.job_uuid == job_uuid,
                 TranscriptionJob.status == JobStatus.PROCESSING,
                 TranscriptionJob.lease_owner == worker_id,
+                TranscriptionJob.attempt_count == expected_attempt_count,
+                exists().where(
+                    TranscriptionResult.job_uuid == TranscriptionJob.job_uuid
+                ),
             )
             .values(
                 status=JobStatus.COMPLETED,

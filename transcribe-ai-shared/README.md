@@ -29,6 +29,8 @@ Le sous-package `worker` suit le même découpage :
 - `protocols.py` décrit le `Transcriber` et le port PostgreSQL minimal ;
 - `postgresql.py` adapte `JobRepository.claim()` à une transaction courte ;
 - `runtime.py` porte le flux consume, claim et transcribe ;
+- `completion.py` persiste le résultat et clôture le job dans une transaction
+  PostgreSQL unique ;
 - `application.py` compose et ferme les adaptateurs partagés ;
 - `testing.py` contient uniquement le fake explicitement destiné au
   développement et aux tests.
@@ -129,8 +131,16 @@ persisté dans `TranscriptionJob.audio_uri`.
 - Un claim refusé couvre aussi bien un UUID inexistant qu'un doublon ou un job
   déjà traité : le runtime acquitte et supprime alors le message sans appeler
   le transcriber. Après un claim réussi, aucun ACK n'est encore effectué, même
-  lorsque le fake retourne un résultat ; la persistance du résultat et l'ACK
-  final appartiennent à l'étape de finalisation suivante.
+  lorsque le fake retourne un résultat. Le runtime n'enchaîne pas encore la
+  finalisation ci-dessous ni l'ACK final, qui appartiendra à une prochaine
+  étape d'orchestration.
+- `TranscriptionCompletionService` ajoute le résultat puis confirme par
+  comparaison la tentative toujours détenue par le worker. Les deux écritures
+  partagent une même session et un même commit ; un refus du CAS ou une erreur
+  antérieure au commit annule la transaction entière. Une erreur pendant le
+  commit peut laisser son résultat inconnu de l'appelant : le service remonte
+  alors l'échec et l'absence d'ACK permet une redélivrance sûre. Ce service ne
+  connaît pas Redis et n'effectue donc aucun ACK.
 - Un payload invalide ou une exception du transcriber reste dans la PEL. Cette
   étape ne définit volontairement ni poison queue, ni retry métier, ni
   `XAUTOCLAIM` automatique.

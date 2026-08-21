@@ -30,6 +30,9 @@ from transcribe_ai_shared import (
     StorageSettings,
     TranscriptionDirectory,
     Transcriber,
+    TranscriptionCompletionError,
+    TranscriptionCompletionRejectedError,
+    TranscriptionCompletionService,
     TranscriptionExecutionError,
     TranscriptionOutput,
     TranscriptionJob,
@@ -91,6 +94,9 @@ def test_supported_public_imports_are_available():
     assert StorageSettings is not None
     assert TranscriptionDirectory is not None
     assert Transcriber is not None
+    assert TranscriptionCompletionError is not None
+    assert TranscriptionCompletionRejectedError is not None
+    assert TranscriptionCompletionService is not None
     assert TranscriptionExecutionError is not None
     assert TranscriptionOutput is not None
     assert TranscriptionJob is not None

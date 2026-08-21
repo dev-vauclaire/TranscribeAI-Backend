@@ -12,7 +12,9 @@ from transcribe_ai_shared import (
     JobRepository,
     JobStatus,
     JobType,
+    ResultRepository,
     TranscriptionJob,
+    TranscriptionResult,
     async_transaction,
 )
 
@@ -75,6 +77,19 @@ async def read_job(
 ) -> TranscriptionJob | None:
     async with factory() as session:
         return await JobRepository(session).get_by_uuid(job_uuid)
+
+
+async def persist_result(
+    factory: async_sessionmaker[AsyncSession],
+    job_uuid: UUID,
+) -> None:
+    async with async_transaction(factory) as session:
+        await ResultRepository(session).add(
+            TranscriptionResult(
+                job_uuid=job_uuid,
+                result={"text": "Transcription terminée."},
+            )
+        )
 
 
 async def test_add_persists_a_valid_job(async_session_factory) -> None:
@@ -703,6 +718,7 @@ async def test_mutations_refuse_an_unknown_job(async_session_factory) -> None:
         completed = await repository.mark_completed(
             unknown_uuid,
             "worker-fast-1",
+            0,
         )
 
     assert claimed is None
@@ -811,12 +827,20 @@ async def test_mark_completed_updates_a_job_owned_by_the_worker(
         status=JobStatus.PROCESSING,
         lease_owner="worker-fast-1",
         lease_expires_at=NOW + timedelta(minutes=5),
+        attempt_count=3,
     )
 
     async with async_session_factory.begin() as session:
+        await ResultRepository(session).add(
+            TranscriptionResult(
+                job_uuid=job_uuid,
+                result={"text": "Transcription terminée."},
+            )
+        )
         completed = await JobRepository(session).mark_completed(
             job_uuid,
             "worker-fast-1",
+            3,
         )
 
     saved = await read_job(async_session_factory, job_uuid)
@@ -825,6 +849,58 @@ async def test_mark_completed_updates_a_job_owned_by_the_worker(
     assert saved.status is JobStatus.COMPLETED
     assert saved.completed_at is not None
     assert saved.completed_at.tzinfo is not None
+
+
+async def test_mark_completed_refuses_a_job_without_a_result(
+    async_session_factory,
+) -> None:
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        lease_owner="worker-fast-1",
+        lease_expires_at=NOW + timedelta(minutes=5),
+        attempt_count=2,
+    )
+
+    async with async_session_factory.begin() as session:
+        completed = await JobRepository(session).mark_completed(
+            job_uuid,
+            "worker-fast-1",
+            2,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert completed is False
+    assert saved is not None
+    assert saved.status is JobStatus.PROCESSING
+    assert saved.completed_at is None
+
+
+async def test_mark_completed_refuses_a_stale_attempt(
+    async_session_factory,
+) -> None:
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        lease_owner="worker-fast-1",
+        lease_expires_at=NOW + timedelta(minutes=5),
+        attempt_count=2,
+    )
+    await persist_result(async_session_factory, job_uuid)
+
+    async with async_session_factory.begin() as session:
+        completed = await JobRepository(session).mark_completed(
+            job_uuid,
+            "worker-fast-1",
+            1,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert completed is False
+    assert saved is not None
+    assert saved.status is JobStatus.PROCESSING
+    assert saved.attempt_count == 2
+    assert saved.completed_at is None
 
 
 @pytest.mark.parametrize(
@@ -853,11 +929,13 @@ async def test_mark_completed_refuses_an_invalid_status_or_owner(
         lease_expires_at=NOW + timedelta(minutes=5),
         completed_at=previous_completed_at,
     )
+    await persist_result(async_session_factory, job_uuid)
 
     async with async_session_factory.begin() as session:
         completed = await JobRepository(session).mark_completed(
             job_uuid,
             requesting_owner,
+            0,
         )
 
     saved = await read_job(async_session_factory, job_uuid)

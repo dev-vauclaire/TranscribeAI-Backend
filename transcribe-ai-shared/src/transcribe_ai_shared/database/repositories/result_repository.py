@@ -11,6 +11,11 @@ class ResultRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def add(self, result: TranscriptionResult) -> None:
+        """Ajoute le résultat à la transaction courante sans la valider."""
+        self._session.add(result)
+        await self._session.flush()
+
     async def get_by_job_uuid(
         self,
         job_uuid: UUID,
