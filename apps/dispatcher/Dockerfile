@@ -16,7 +16,8 @@ FROM python:3.12-slim-trixie AS runtime
 
 ENV PATH="/opt/dispatcher/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    DISPATCHER_BATCH_SIZE=100
+    DISPATCHER_BATCH_SIZE=100 \
+    MAX_ATTEMPTS=3
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends 'libpq5=17.*' \

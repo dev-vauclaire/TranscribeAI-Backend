@@ -11,7 +11,10 @@ from transcribe_ai_shared.database.session import (
     AsyncSessionFactory,
     async_transaction,
 )
-from transcribe_ai_shared.queue.models import MAX_ATTEMPT_COUNT
+from transcribe_ai_shared.retry_policy import (
+    can_schedule_next_attempt,
+    validate_max_attempts,
+)
 from transcribe_ai_shared.worker.exceptions import (
     TranscriptionFailureTransitionError,
     TranscriptionFailureTransitionRejectedError,
@@ -55,12 +58,7 @@ class TranscriptionFailureService:
         max_attempts: int,
         repository_factory: _RepositoryFactory = JobRepository,
     ) -> None:
-        if (
-            type(max_attempts) is not int
-            or max_attempts < 1
-            or max_attempts > MAX_ATTEMPT_COUNT + 1
-        ):
-            raise ValueError("max_attempts doit être compris entre 1 et 2147483648")
+        validate_max_attempts(max_attempts)
         self._session_factory = session_factory
         self._max_attempts = max_attempts
         self._repository_factory = repository_factory
@@ -75,7 +73,10 @@ class TranscriptionFailureService:
         """Committe une requeue ou un échec terminal pour la tentative détenue."""
         should_retry = (
             failure.category is TranscriptionFailureCategory.RETRYABLE
-            and job.attempt_count + 1 < self._max_attempts
+            and can_schedule_next_attempt(
+                attempt_count=job.attempt_count,
+                max_attempts=self._max_attempts,
+            )
         )
         next_status = JobStatus.QUEUED if should_retry else JobStatus.FAILED
         next_attempt_count = (

@@ -125,6 +125,7 @@ class RequeueBeforeMarkStore:
         dispatched_at: datetime,
     ) -> bool:
         self.observed_attempt_count = expected_attempt_count
+        expired_lease = datetime(2000, 1, 1, tzinfo=UTC)
 
         async with self._session_factory.begin() as session:
             # Le worker a claim le message publié, puis son lease a expiré.
@@ -134,12 +135,16 @@ class RequeueBeforeMarkStore:
                 .values(
                     status=JobStatus.PROCESSING,
                     lease_owner="expired-worker",
-                    lease_expires_at=datetime(2000, 1, 1, tzinfo=UTC),
+                    lease_expires_at=expired_lease,
                 )
             )
-            requeued = await JobRepository(session).requeue_expired_job(job_uuid)
-            assert requeued is not None
-            assert requeued.attempt_count == expected_attempt_count + 1
+            requeued = await JobRepository(session).recover_expired_job(
+                job_uuid,
+                expected_attempt_count,
+                expired_lease,
+                should_retry=True,
+            )
+            assert requeued is True
 
         return await self._delegate.mark_dispatched(
             job_uuid,

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import Engine, event
+from sqlalchemy import Engine, event, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from transcribe_ai_shared import (
@@ -341,23 +341,29 @@ async def test_mark_dispatched_refuses_a_stale_attempt_after_requeue(
     async_session_factory,
 ) -> None:
     previous_dispatch = NOW - timedelta(minutes=20)
+    expired_lease = NOW - timedelta(minutes=10)
     job_uuid = await persist_job(
         async_session_factory,
         status=JobStatus.PROCESSING,
         dispatch_required=True,
         last_dispatched_at=previous_dispatch,
         lease_owner="worker-fast-1",
-        lease_expires_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+        lease_expires_at=expired_lease,
         attempt_count=2,
     )
 
     async with async_session_factory.begin() as session:
         repository = JobRepository(session)
-        requeued = await repository.requeue_expired_job(job_uuid)
+        requeued = await repository.recover_expired_job(
+            job_uuid,
+            2,
+            expired_lease,
+            should_retry=True,
+        )
         dispatched = await repository.mark_dispatched(job_uuid, 2, NOW)
 
     saved = await read_job(async_session_factory, job_uuid)
-    assert requeued is not None
+    assert requeued is True
     assert dispatched is False
     assert saved is not None
     assert saved.status is JobStatus.QUEUED
@@ -750,65 +756,74 @@ async def test_renew_lease_preserves_a_later_expiration(
 async def test_find_expired_processing_jobs_filters_orders_and_limits(
     async_session_factory,
 ) -> None:
+    oldest_expiration = datetime(2000, 1, 1, tzinfo=timezone.utc)
+    newest_expiration = oldest_expiration + timedelta(minutes=10)
     oldest_uuid = await persist_job(
         async_session_factory,
         status=JobStatus.PROCESSING,
         lease_owner="worker-1",
-        lease_expires_at=NOW - timedelta(minutes=10),
+        lease_expires_at=oldest_expiration,
     )
     newest_uuid = await persist_job(
         async_session_factory,
         status=JobStatus.PROCESSING,
         lease_owner="worker-2",
-        lease_expires_at=NOW - timedelta(minutes=1),
+        lease_expires_at=newest_expiration,
     )
     await persist_job(
         async_session_factory,
         status=JobStatus.PROCESSING,
         lease_owner="worker-3",
-        lease_expires_at=NOW,
+        lease_expires_at=ACTIVE_LEASE_EXPIRATION,
     )
     await persist_job(
         async_session_factory,
         status=JobStatus.PROCESSING,
         lease_owner="worker-4",
-        lease_expires_at=NOW + timedelta(minutes=1),
+        lease_expires_at=ACTIVE_LEASE_EXPIRATION + timedelta(minutes=1),
     )
     await persist_job(
         async_session_factory,
         status=JobStatus.FAILED,
         lease_owner="worker-5",
-        lease_expires_at=NOW - timedelta(minutes=20),
+        lease_expires_at=oldest_expiration - timedelta(minutes=1),
     )
 
     async with async_session_factory() as session:
         repository = JobRepository(session)
-        limited_jobs = await repository.find_expired_processing_jobs(NOW, limit=1)
-        all_jobs = await repository.find_expired_processing_jobs(NOW, limit=10)
+        limited_jobs = await repository.find_expired_processing_jobs(limit=1)
+        all_jobs = await repository.find_expired_processing_jobs(limit=10)
 
     assert [job.job_uuid for job in limited_jobs] == [oldest_uuid]
     assert [job.job_uuid for job in all_jobs] == [oldest_uuid, newest_uuid]
 
 
-async def test_requeue_expired_job_resets_lease_and_increments_attempt_count(
+async def test_recover_expired_job_requeues_and_increments_attempt_count(
     async_session_factory,
 ) -> None:
     last_dispatched_at = NOW - timedelta(minutes=20)
+    expired_lease = NOW - timedelta(minutes=10)
     job_uuid = await persist_job(
         async_session_factory,
         status=JobStatus.PROCESSING,
         dispatch_required=False,
         last_dispatched_at=last_dispatched_at,
         lease_owner="worker-fast-1",
-        lease_expires_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+        lease_expires_at=expired_lease,
         attempt_count=2,
+        last_error="PREVIOUS_FAILURE",
     )
 
     async with async_session_factory.begin() as session:
-        requeued = await JobRepository(session).requeue_expired_job(job_uuid)
+        recovered = await JobRepository(session).recover_expired_job(
+            job_uuid,
+            2,
+            expired_lease,
+            should_retry=True,
+        )
 
     saved = await read_job(async_session_factory, job_uuid)
-    assert requeued is not None
+    assert recovered is True
     assert saved is not None
     assert saved.status is JobStatus.QUEUED
     assert saved.dispatch_required is True
@@ -816,6 +831,42 @@ async def test_requeue_expired_job_resets_lease_and_increments_attempt_count(
     assert saved.lease_owner is None
     assert saved.lease_expires_at is None
     assert saved.attempt_count == 3
+    assert saved.last_error == "WORKER_LEASE_EXPIRED"
+    assert saved.completed_at is None
+
+
+async def test_recover_expired_job_marks_job_failed_without_incrementing_attempt(
+    async_session_factory,
+) -> None:
+    expired_lease = NOW - timedelta(minutes=10)
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        dispatch_required=True,
+        lease_owner="worker-fast-1",
+        lease_expires_at=expired_lease,
+        attempt_count=2,
+    )
+
+    async with async_session_factory.begin() as session:
+        recovered = await JobRepository(session).recover_expired_job(
+            job_uuid,
+            2,
+            expired_lease,
+            should_retry=False,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert recovered is True
+    assert saved is not None
+    assert saved.status is JobStatus.FAILED
+    assert saved.attempt_count == 2
+    assert saved.dispatch_required is False
+    assert saved.lease_owner is None
+    assert saved.lease_expires_at is None
+    assert saved.last_error == "WORKER_LEASE_EXPIRED"
+    assert saved.completed_at is not None
+    assert saved.completed_at.tzinfo is not None
 
 
 @pytest.mark.parametrize(
@@ -827,7 +878,7 @@ async def test_requeue_expired_job_resets_lease_and_increments_attempt_count(
         (JobStatus.FAILED, -timedelta(hours=1)),
     ],
 )
-async def test_requeue_expired_job_refuses_an_available_or_non_processing_job(
+async def test_recover_expired_job_refuses_an_available_or_non_processing_job(
     async_session_factory,
     status: JobStatus,
     lease_offset: timedelta,
@@ -845,10 +896,15 @@ async def test_requeue_expired_job_refuses_an_available_or_non_processing_job(
     )
 
     async with async_session_factory.begin() as session:
-        requeued = await JobRepository(session).requeue_expired_job(job_uuid)
+        recovered = await JobRepository(session).recover_expired_job(
+            job_uuid,
+            2,
+            lease_expires_at,
+            should_retry=True,
+        )
 
     saved = await read_job(async_session_factory, job_uuid)
-    assert requeued is None
+    assert recovered is False
     assert saved is not None
     assert saved.status is status
     assert saved.dispatch_required is False
@@ -856,6 +912,84 @@ async def test_requeue_expired_job_refuses_an_available_or_non_processing_job(
     assert saved.lease_owner == "worker-fast-1"
     assert saved.lease_expires_at == lease_expires_at
     assert saved.attempt_count == 2
+
+
+async def test_recover_expired_job_refuses_a_stale_attempt(
+    async_session_factory,
+) -> None:
+    expired_lease = NOW - timedelta(minutes=10)
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        dispatch_required=False,
+        lease_owner="worker-fast-1",
+        lease_expires_at=expired_lease,
+        attempt_count=2,
+    )
+
+    async with async_session_factory.begin() as session:
+        recovered = await JobRepository(session).recover_expired_job(
+            job_uuid,
+            1,
+            expired_lease,
+            should_retry=True,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert recovered is False
+    assert saved is not None
+    assert saved.status is JobStatus.PROCESSING
+    assert saved.attempt_count == 2
+    assert saved.dispatch_required is False
+    assert saved.lease_owner == "worker-fast-1"
+    assert saved.lease_expires_at == expired_lease
+
+
+async def test_recover_expired_job_refuses_a_lease_renewed_after_selection(
+    async_session_factory,
+) -> None:
+    observed_lease = datetime(2000, 1, 1, tzinfo=timezone.utc)
+    renewed_lease = ACTIVE_LEASE_EXPIRATION
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        dispatch_required=False,
+        lease_owner="worker-fast-1",
+        lease_expires_at=observed_lease,
+        attempt_count=2,
+    )
+
+    async with async_session_factory() as selection_session:
+        selected_jobs = await JobRepository(
+            selection_session
+        ).find_expired_processing_jobs(limit=10)
+
+    assert [job.job_uuid for job in selected_jobs] == [job_uuid]
+
+    async with async_session_factory.begin() as session:
+        result = await session.execute(
+            update(TranscriptionJob)
+            .where(TranscriptionJob.job_uuid == job_uuid)
+            .values(lease_expires_at=renewed_lease)
+        )
+
+    async with async_session_factory.begin() as session:
+        recovered = await JobRepository(session).recover_expired_job(
+            job_uuid,
+            2,
+            observed_lease,
+            should_retry=True,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert result.rowcount == 1
+    assert recovered is False
+    assert saved is not None
+    assert saved.status is JobStatus.PROCESSING
+    assert saved.attempt_count == 2
+    assert saved.dispatch_required is False
+    assert saved.lease_owner == "worker-fast-1"
+    assert saved.lease_expires_at == renewed_lease
 
 
 async def test_mutations_refuse_an_unknown_job(async_session_factory) -> None:
@@ -875,7 +1009,12 @@ async def test_mutations_refuse_an_unknown_job(async_session_factory) -> None:
             NOW + timedelta(minutes=10),
             0,
         )
-        requeued = await repository.requeue_expired_job(unknown_uuid)
+        recovered = await repository.recover_expired_job(
+            unknown_uuid,
+            0,
+            NOW - timedelta(minutes=5),
+            should_retry=True,
+        )
         requeued_after_failure = await repository.requeue_after_failure(
             unknown_uuid,
             "worker-fast-1",
@@ -896,32 +1035,75 @@ async def test_mutations_refuse_an_unknown_job(async_session_factory) -> None:
 
     assert claimed is None
     assert renewed is False
-    assert requeued is None
+    assert recovered is False
     assert requeued_after_failure is False
     assert failed is False
     assert completed is False
 
 
-async def test_requeue_expired_job_only_increments_once(
+async def test_concurrent_recovery_only_increments_attempt_once(
     async_session_factory,
 ) -> None:
+    expired_lease = NOW - timedelta(minutes=10)
     job_uuid = await persist_job(
         async_session_factory,
         status=JobStatus.PROCESSING,
         lease_owner="worker-fast-1",
-        lease_expires_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+        lease_expires_at=expired_lease,
     )
 
-    async with async_session_factory.begin() as session:
-        repository = JobRepository(session)
-        first_requeue = await repository.requeue_expired_job(job_uuid)
-        second_requeue = await repository.requeue_expired_job(job_uuid)
+    async def recover() -> bool:
+        async with async_session_factory.begin() as session:
+            return await JobRepository(session).recover_expired_job(
+                job_uuid,
+                0,
+                expired_lease,
+                should_retry=True,
+            )
+
+    outcomes = await asyncio.wait_for(
+        asyncio.gather(recover(), recover()),
+        timeout=10,
+    )
 
     saved = await read_job(async_session_factory, job_uuid)
-    assert first_requeue is not None
-    assert second_requeue is None
+    assert sorted(outcomes) == [False, True]
     assert saved is not None
     assert saved.attempt_count == 1
+
+
+async def test_recover_expired_job_does_not_commit_the_callers_transaction(
+    async_session_factory,
+) -> None:
+    expired_lease = NOW - timedelta(minutes=10)
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        dispatch_required=False,
+        lease_owner="worker-fast-1",
+        lease_expires_at=expired_lease,
+        attempt_count=2,
+    )
+
+    with pytest.raises(RuntimeError, match="rollback requested"):
+        async with async_transaction(async_session_factory) as session:
+            recovered = await JobRepository(session).recover_expired_job(
+                job_uuid,
+                2,
+                expired_lease,
+                should_retry=True,
+            )
+            assert recovered is True
+            raise RuntimeError("rollback requested")
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert saved is not None
+    assert saved.status is JobStatus.PROCESSING
+    assert saved.attempt_count == 2
+    assert saved.dispatch_required is False
+    assert saved.lease_owner == "worker-fast-1"
+    assert saved.lease_expires_at == expired_lease
+    assert saved.last_error is None
 
 
 async def test_requeue_after_failure_resets_lease_and_increments_attempt_count(

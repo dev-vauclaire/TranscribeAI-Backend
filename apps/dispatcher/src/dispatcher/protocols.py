@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
+from dispatcher.models import ExpiredJobSnapshot
 from transcribe_ai_shared import JobStreamMessage
 
 
@@ -22,4 +23,24 @@ class DispatchJobStore(Protocol):
         dispatched_at: datetime,
     ) -> bool:
         """Confirme la publication par comparaison avec la tentative observée."""
+        ...
+
+
+class ExpiredJobStore(Protocol):
+    """Port PostgreSQL nécessaire à la récupération des leases expirés."""
+
+    async def find_expired_jobs(
+        self,
+        limit: int,
+    ) -> list[ExpiredJobSnapshot]:
+        """Retourne un snapshot borné des jobs expirés selon PostgreSQL."""
+        ...
+
+    async def recover_expired_job(
+        self,
+        snapshot: ExpiredJobSnapshot,
+        *,
+        should_retry: bool,
+    ) -> bool:
+        """Applique la transition si le lease observé est toujours expiré."""
         ...

@@ -3,7 +3,7 @@ from typing import Annotated, Self
 from pydantic import Field, StringConstraints, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from transcribe_ai_shared.queue.models import MAX_ATTEMPT_COUNT
+from transcribe_ai_shared.retry_policy import MAX_TOTAL_ATTEMPTS
 
 
 WorkerId = Annotated[
@@ -33,7 +33,7 @@ class WorkerSettings(BaseSettings):
     worker_block_milliseconds: int = Field(default=5_000, gt=0, lt=10_000)
     worker_lease_seconds: int = Field(default=300, gt=0)
     worker_heartbeat_seconds: int = Field(default=60, gt=0)
-    max_attempts: int = Field(default=3, ge=1, le=MAX_ATTEMPT_COUNT + 1)
+    max_attempts: int = Field(default=3, ge=1, le=MAX_TOTAL_ATTEMPTS)
 
     @model_validator(mode="after")
     def validate_heartbeat_interval(self) -> Self:

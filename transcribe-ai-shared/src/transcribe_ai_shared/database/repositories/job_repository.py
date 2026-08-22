@@ -178,7 +178,6 @@ class JobRepository:
 
     async def find_expired_processing_jobs(
         self,
-        now: datetime,
         limit: int,
     ) -> list[TranscriptionJob]:
         """Liste les jobs en cours dont le lease est expiré, du plus ancien au plus récent."""
@@ -186,7 +185,7 @@ class JobRepository:
             select(TranscriptionJob)
             .where(
                 TranscriptionJob.status == _literal_job_status(JobStatus.PROCESSING),
-                TranscriptionJob.lease_expires_at < now,
+                TranscriptionJob.lease_expires_at < func.now(),
             )
             .order_by(
                 TranscriptionJob.lease_expires_at.asc(),
@@ -197,30 +196,52 @@ class JobRepository:
         result = await self._session.scalars(statement)
         return list(result.all())
 
-    async def requeue_expired_job(
+    async def recover_expired_job(
         self,
         job_uuid: UUID,
-    ) -> TranscriptionJob | None:
-        """Réarme le dispatch d'un job expiré et compte sa reprise worker."""
+        expected_attempt_count: int,
+        expected_lease_expires_at: datetime,
+        *,
+        should_retry: bool,
+    ) -> bool:
+        """Récupère par CAS une tentative dont le lease observé reste expiré.
+
+        L'égalité sur l'échéance empêche un dispatcher retardé d'écraser le
+        renouvellement effectué par un worker après la sélection du batch.
+        PostgreSQL reste la source de temps de la sélection et de la transition,
+        ce qui évite qu'une dérive d'horloge du dispatcher expire un job vivant.
+        """
+        if type(should_retry) is not bool:
+            raise TypeError("should_retry doit être un booléen")
+
+        values = {
+            "dispatch_required": should_retry,
+            "lease_owner": None,
+            "lease_expires_at": None,
+            "last_error": "WORKER_LEASE_EXPIRED",
+            "completed_at": None if should_retry else func.now(),
+        }
+        if should_retry:
+            values.update(
+                status=JobStatus.QUEUED,
+                attempt_count=TranscriptionJob.attempt_count + 1,
+            )
+        else:
+            values.update(status=JobStatus.FAILED)
+
         statement = (
             update(TranscriptionJob)
             .where(
                 TranscriptionJob.job_uuid == job_uuid,
                 TranscriptionJob.status == JobStatus.PROCESSING,
+                TranscriptionJob.attempt_count == expected_attempt_count,
+                TranscriptionJob.lease_expires_at == expected_lease_expires_at,
                 TranscriptionJob.lease_expires_at < func.now(),
             )
-            .values(
-                status=JobStatus.QUEUED,
-                dispatch_required=True,
-                lease_owner=None,
-                lease_expires_at=None,
-                attempt_count=TranscriptionJob.attempt_count + 1,
-            )
-            .returning(TranscriptionJob)
-            .execution_options(populate_existing=True)
+            .values(**values)
         )
         result = await self._session.execute(statement)
-        return result.scalar_one_or_none()
+        return result.rowcount == 1
 
     async def requeue_after_failure(
         self,

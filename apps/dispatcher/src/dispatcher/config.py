@@ -1,6 +1,8 @@
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from transcribe_ai_shared.retry_policy import MAX_TOTAL_ATTEMPTS
+
 
 class DispatcherSettings(BaseSettings):
     """Configuration de l'exécution one-shot du dispatcher."""
@@ -12,6 +14,13 @@ class DispatcherSettings(BaseSettings):
         extra="forbid",
         frozen=True,
         hide_input_in_errors=True,
+        populate_by_name=True,
     )
 
     batch_size: int = Field(default=100, gt=0, le=1_000)
+    max_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=MAX_TOTAL_ATTEMPTS,
+        validation_alias="MAX_ATTEMPTS",
+    )
