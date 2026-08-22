@@ -57,6 +57,16 @@ async def test_run_worker_composes_runtime_and_keeps_resources_between_iteration
         def __init__(self, active_session_factory: object) -> None:
             captured["completion_session_factory"] = active_session_factory
 
+    class FakeFailureHandler:
+        def __init__(
+            self,
+            active_session_factory: object,
+            *,
+            max_attempts: int,
+        ) -> None:
+            captured["failure_session_factory"] = active_session_factory
+            captured["max_attempts"] = max_attempts
+
     class FakeRuntime:
         def __init__(self, **dependencies: object) -> None:
             captured.update(dependencies)
@@ -87,6 +97,11 @@ async def test_run_worker_composes_runtime_and_keeps_resources_between_iteration
         "TranscriptionCompletionService",
         FakeCompleter,
     )
+    monkeypatch.setattr(
+        application,
+        "TranscriptionFailureService",
+        FakeFailureHandler,
+    )
     monkeypatch.setattr(application, "WorkerRuntime", FakeRuntime)
 
     with pytest.raises(StopWorker):
@@ -100,6 +115,7 @@ async def test_run_worker_composes_runtime_and_keeps_resources_between_iteration
                 worker_consumer_group="workers",
                 worker_block_milliseconds=250,
                 worker_lease_seconds=90,
+                max_attempts=5,
             ),
             transcriber=transcriber,
             job_type=JobType.BATCH,
@@ -112,7 +128,10 @@ async def test_run_worker_composes_runtime_and_keeps_resources_between_iteration
     assert captured["store_job_type"] is JobType.BATCH
     assert captured["transcriber"] is transcriber
     assert captured["completion_session_factory"] is session_factory
+    assert captured["failure_session_factory"] is session_factory
     assert isinstance(captured["completer"], FakeCompleter)
+    assert isinstance(captured["failure_handler"], FakeFailureHandler)
+    assert captured["max_attempts"] == 5
     assert captured["job_type"] is JobType.BATCH
     assert captured["group_name"] == "workers"
     assert captured["worker_id"] == "batch-1"

@@ -9,22 +9,31 @@ import transcribe_ai_shared.worker.runtime as runtime_module
 from transcribe_ai_shared import (
     AudioLocation,
     ClaimedJob,
+    ClassifiedTranscriptionFailure,
     InvalidJobStreamMessageError,
+    JobStatus,
     JobType,
+    PermanentTranscriptionError,
     ReceivedJobStreamMessage,
+    RetryableTranscriptionError,
     Transcriber,
     TranscriptionCompleter,
     TranscriptionCompletionError,
-    TranscriptionExecutionError,
+    TranscriptionFailureCategory,
+    TranscriptionFailureHandler,
+    TranscriptionFailureResolution,
+    TranscriptionFailureTransitionError,
     TranscriptionOutput,
     TranscriptionStreams,
     WorkerClaimRejected,
     WorkerCompleted,
+    WorkerFailed,
     WorkerHeartbeatError,
     WorkerIdle,
     WorkerJobStore,
     WorkerJobTypeMismatchError,
     WorkerLeaseLostError,
+    WorkerRetryScheduled,
     WorkerRuntime,
 )
 from transcribe_ai_shared.worker.testing import FakeTranscriber
@@ -193,6 +202,37 @@ class RecordingCompleter:
             raise self.error
 
 
+class RecordingFailureHandler:
+    def __init__(
+        self,
+        *,
+        resolution: TranscriptionFailureResolution | None = None,
+        error: Exception | None = None,
+        events: list[str] | None = None,
+    ) -> None:
+        self.resolution = resolution or TranscriptionFailureResolution(
+            status=JobStatus.FAILED,
+            attempt_count=2,
+        )
+        self.error = error
+        self.events = events
+        self.calls: list[tuple[ClaimedJob, str, ClassifiedTranscriptionFailure]] = []
+
+    async def handle(
+        self,
+        *,
+        job: ClaimedJob,
+        worker_id: str,
+        failure: ClassifiedTranscriptionFailure,
+    ) -> TranscriptionFailureResolution:
+        if self.events is not None:
+            self.events.append("handle_failure")
+        self.calls.append((job, worker_id, failure))
+        if self.error is not None:
+            raise self.error
+        return self.resolution
+
+
 class BlockingTranscriber:
     def __init__(self) -> None:
         self.started = asyncio.Event()
@@ -240,6 +280,7 @@ def make_runtime(
     transcriber: Transcriber,
     *,
     completer: TranscriptionCompleter | None = None,
+    failure_handler: TranscriptionFailureHandler | None = None,
     heartbeat_interval: timedelta = timedelta(minutes=1),
     clock=lambda: NOW,
     sleep=asyncio.sleep,
@@ -249,6 +290,7 @@ def make_runtime(
         job_store=cast(WorkerJobStore, store),
         transcriber=transcriber,
         completer=completer or RecordingCompleter(),
+        failure_handler=failure_handler or RecordingFailureHandler(),
         job_type=JobType.FAST,
         group_name=GROUP_NAME,
         worker_id=WORKER_ID,
@@ -461,26 +503,101 @@ async def test_invalid_payload_error_is_propagated_before_postgres_access() -> N
     assert streams.ack_calls == []
 
 
-async def test_transcriber_error_is_classified_and_never_acknowledged() -> None:
+async def test_retryable_transcriber_error_is_persisted_then_acknowledged() -> None:
+    events: list[str] = []
     message = make_message()
-    cause = RuntimeError("model unavailable")
-    streams = RecordingStreams(message)
+    claimed_job = make_claimed_job()
+    cause = RetryableTranscriptionError("TRANSCRIPTION_MODEL_UNAVAILABLE")
+    streams = RecordingStreams(message, events=events)
+    store = RecordingJobStore(claimed_job, events=events)
     transcriber = FakeTranscriber(error=cause)
     completer = RecordingCompleter()
+    failure_handler = RecordingFailureHandler(
+        resolution=TranscriptionFailureResolution(
+            status=JobStatus.QUEUED,
+            attempt_count=3,
+        ),
+        events=events,
+    )
 
-    with pytest.raises(TranscriptionExecutionError) as raised:
+    result = await make_runtime(
+        streams,
+        store,
+        transcriber,
+        completer=completer,
+        failure_handler=failure_handler,
+    ).process_next()
+
+    failure = ClassifiedTranscriptionFailure(
+        category=TranscriptionFailureCategory.RETRYABLE,
+        error_code="TRANSCRIPTION_MODEL_UNAVAILABLE",
+    )
+    assert result == WorkerRetryScheduled(
+        message=message,
+        job=claimed_job,
+        failure=failure,
+        next_attempt_count=3,
+        removed_from_stream=True,
+    )
+    assert events == ["consume", "claim", "handle_failure", "ack_and_delete"]
+    assert transcriber.calls == (AudioLocation(f"{JOB_UUID}/input.wav"),)
+    assert completer.calls == []
+    assert failure_handler.calls == [(claimed_job, WORKER_ID, failure)]
+    assert streams.ack_calls == [(GROUP_NAME, message)]
+
+
+async def test_permanent_transcriber_error_marks_failed_then_acknowledges() -> None:
+    events: list[str] = []
+    message = make_message()
+    claimed_job = make_claimed_job()
+    streams = RecordingStreams(message, events=events)
+    cause = PermanentTranscriptionError("TRANSCRIPTION_AUDIO_UNSUPPORTED")
+    transcriber = FakeTranscriber(error=cause)
+    completer = RecordingCompleter()
+    failure_handler = RecordingFailureHandler(events=events)
+
+    result = await make_runtime(
+        streams,
+        RecordingJobStore(claimed_job, events=events),
+        transcriber,
+        completer=completer,
+        failure_handler=failure_handler,
+    ).process_next()
+
+    failure = ClassifiedTranscriptionFailure(
+        category=TranscriptionFailureCategory.PERMANENT,
+        error_code="TRANSCRIPTION_AUDIO_UNSUPPORTED",
+    )
+    assert result == WorkerFailed(
+        message=message,
+        job=claimed_job,
+        failure=failure,
+        removed_from_stream=True,
+    )
+    assert events == ["consume", "claim", "handle_failure", "ack_and_delete"]
+    assert completer.calls == []
+    assert failure_handler.calls == [(claimed_job, WORKER_ID, failure)]
+    assert streams.ack_calls == [(GROUP_NAME, message)]
+
+
+async def test_failure_transition_error_leaves_the_message_pending() -> None:
+    message = make_message()
+    streams = RecordingStreams(message)
+    cause = RetryableTranscriptionError("TRANSCRIPTION_MODEL_UNAVAILABLE")
+    transition_error = TranscriptionFailureTransitionError(JOB_UUID)
+    failure_handler = RecordingFailureHandler(error=transition_error)
+
+    with pytest.raises(TranscriptionFailureTransitionError) as raised:
         await make_runtime(
             streams,
             RecordingJobStore(make_claimed_job()),
-            transcriber,
-            completer=completer,
+            FakeTranscriber(error=cause),
+            failure_handler=failure_handler,
         ).process_next()
 
-    assert raised.value.job_uuid == JOB_UUID
-    assert raised.value.redis_message_id == REDIS_MESSAGE_ID
-    assert raised.value.__cause__ is cause
-    assert transcriber.calls == (AudioLocation(f"{JOB_UUID}/input.wav"),)
-    assert completer.calls == []
+    assert raised.value is transition_error
+    assert raised.value.__context__ is None
+    assert len(failure_handler.calls) == 1
     assert streams.ack_calls == []
 
 
@@ -589,21 +706,32 @@ async def test_heartbeat_stops_when_transcription_fails() -> None:
     streams = RecordingStreams(make_message())
     store = RecordingJobStore(make_claimed_job())
     completer = RecordingCompleter()
+    failure_handler = RecordingFailureHandler(
+        resolution=TranscriptionFailureResolution(
+            status=JobStatus.QUEUED,
+            attempt_count=3,
+        )
+    )
 
-    with pytest.raises(TranscriptionExecutionError) as raised:
-        await make_runtime(
-            streams,
-            store,
-            FailingAfterHeartbeatStartsTranscriber(),
-            completer=completer,
-            sleep=controlled_sleep,
-        ).process_next()
+    result = await make_runtime(
+        streams,
+        store,
+        FailingAfterHeartbeatStartsTranscriber(),
+        completer=completer,
+        failure_handler=failure_handler,
+        sleep=controlled_sleep,
+    ).process_next()
 
-    assert raised.value.__cause__ is cause
+    assert isinstance(result, WorkerRetryScheduled)
+    assert result.failure == ClassifiedTranscriptionFailure(
+        category=TranscriptionFailureCategory.RETRYABLE,
+        error_code="TRANSCRIPTION_UNEXPECTED_ERROR",
+    )
     assert controlled_sleep.cancelled.is_set()
     assert store.renew_calls == []
     assert completer.calls == []
-    assert streams.ack_calls == []
+    assert len(failure_handler.calls) == 1
+    assert streams.ack_calls == [(GROUP_NAME, make_message())]
 
 
 async def test_external_cancellation_during_heartbeat_cleanup_is_propagated() -> None:
@@ -883,6 +1011,7 @@ async def test_heartbeat_failure_does_not_mask_simultaneous_transcriber_error(
     )
     streams = RecordingStreams(make_message())
     completer = RecordingCompleter()
+    failure_handler = RecordingFailureHandler()
 
     async def no_delay(_seconds: float) -> None:
         return None
@@ -898,19 +1027,24 @@ async def test_heartbeat_failure_does_not_mask_simultaneous_transcriber_error(
 
     monkeypatch.setattr(runtime_module.asyncio, "wait", wait_for_both_tasks)
 
-    with pytest.raises(TranscriptionExecutionError) as raised:
-        await make_runtime(
-            streams,
-            store,
-            FakeTranscriber(error=transcription_cause),
-            completer=completer,
-            sleep=no_delay,
-        ).process_next()
+    result = await make_runtime(
+        streams,
+        store,
+        FakeTranscriber(error=transcription_cause),
+        completer=completer,
+        failure_handler=failure_handler,
+        sleep=no_delay,
+    ).process_next()
 
-    assert raised.value.__cause__ is transcription_cause
+    assert isinstance(result, WorkerFailed)
+    assert result.failure == ClassifiedTranscriptionFailure(
+        category=TranscriptionFailureCategory.RETRYABLE,
+        error_code="TRANSCRIPTION_UNEXPECTED_ERROR",
+    )
     assert len(store.renew_calls) == 1
+    assert len(failure_handler.calls) == 1
     assert completer.calls == []
-    assert streams.ack_calls == []
+    assert streams.ack_calls == [(GROUP_NAME, make_message())]
 
 
 async def test_lease_expiry_is_normalized_to_utc() -> None:
@@ -972,6 +1106,10 @@ async def test_runtime_rejects_invalid_identity_or_lease(
         "job_store": cast(WorkerJobStore, RecordingJobStore(None)),
         "transcriber": FakeTranscriber(),
         "completer": cast(TranscriptionCompleter, RecordingCompleter()),
+        "failure_handler": cast(
+            TranscriptionFailureHandler,
+            RecordingFailureHandler(),
+        ),
         "job_type": JobType.FAST,
         "group_name": GROUP_NAME,
         "worker_id": WORKER_ID,

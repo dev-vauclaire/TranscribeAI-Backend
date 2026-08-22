@@ -3,7 +3,12 @@ from typing import Protocol
 from uuid import UUID
 
 from transcribe_ai_shared.storage.models import AudioLocation
-from transcribe_ai_shared.worker.models import ClaimedJob, TranscriptionOutput
+from transcribe_ai_shared.worker.models import (
+    ClaimedJob,
+    ClassifiedTranscriptionFailure,
+    TranscriptionFailureResolution,
+    TranscriptionOutput,
+)
 
 
 class Transcriber(Protocol):
@@ -52,4 +57,18 @@ class TranscriptionCompleter(Protocol):
         output: TranscriptionOutput,
     ) -> None:
         """Persiste le résultat et l'état terminal avant tout ACK Redis."""
+        ...
+
+
+class TranscriptionFailureHandler(Protocol):
+    """Port de résolution durable appelé après un échec d'inférence classifié."""
+
+    async def handle(
+        self,
+        *,
+        job: ClaimedJob,
+        worker_id: str,
+        failure: ClassifiedTranscriptionFailure,
+    ) -> TranscriptionFailureResolution:
+        """Persiste la requeue ou l'échec terminal avant tout ACK Redis."""
         ...

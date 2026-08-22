@@ -222,22 +222,58 @@ class JobRepository:
         result = await self._session.execute(statement)
         return result.scalar_one_or_none()
 
-    async def mark_failed(
+    async def requeue_after_failure(
         self,
         job_uuid: UUID,
         worker_id: str,
+        expected_attempt_count: int,
         error_code: str,
     ) -> bool:
-        """Termine en échec uniquement le job détenu par le worker indiqué."""
+        """Réarme uniquement la tentative active encore détenue par le worker."""
         statement = (
             update(TranscriptionJob)
             .where(
                 TranscriptionJob.job_uuid == job_uuid,
                 TranscriptionJob.status == JobStatus.PROCESSING,
                 TranscriptionJob.lease_owner == worker_id,
+                TranscriptionJob.attempt_count == expected_attempt_count,
+                TranscriptionJob.lease_expires_at > func.now(),
+            )
+            .values(
+                status=JobStatus.QUEUED,
+                attempt_count=TranscriptionJob.attempt_count + 1,
+                dispatch_required=True,
+                lease_owner=None,
+                lease_expires_at=None,
+                last_error=error_code,
+                completed_at=None,
+            )
+        )
+        result = await self._session.execute(statement)
+        return result.rowcount == 1
+
+    async def mark_failed(
+        self,
+        job_uuid: UUID,
+        worker_id: str,
+        expected_attempt_count: int,
+        error_code: str,
+    ) -> bool:
+        """Termine uniquement la tentative active encore détenue par le worker."""
+        statement = (
+            update(TranscriptionJob)
+            .where(
+                TranscriptionJob.job_uuid == job_uuid,
+                TranscriptionJob.status == JobStatus.PROCESSING,
+                TranscriptionJob.lease_owner == worker_id,
+                TranscriptionJob.attempt_count == expected_attempt_count,
+                TranscriptionJob.lease_expires_at > func.now(),
             )
             .values(
                 status=JobStatus.FAILED,
+                dispatch_required=False,
+                lease_owner=None,
+                lease_expires_at=None,
                 last_error=error_code,
                 completed_at=func.now(),
             )

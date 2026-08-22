@@ -6,8 +6,11 @@ traitement au transcriber injecté. La boucle conserve les connexions et le
 transcriber entre deux messages. Pendant l'inférence, elle renouvelle le lease
 PostgreSQL selon `WORKER_HEARTBEAT_SECONDS`. Après une inférence réussie, le
 résultat et l'état `COMPLETED` sont committés ensemble avant l'ACK Redis. Elle ne
-contient aucune logique HTTP et n'implémente pas encore le retry ou le moteur ML
-réel.
+contient aucune logique HTTP et n'implémente pas encore le moteur ML réel.
+
+Une erreur retryable réarme le job dans PostgreSQL avant de supprimer l'ancien
+message Redis. Une erreur permanente, ou une tentative ayant atteint
+`MAX_ATTEMPTS`, termine le job en `FAILED` sans nouvelle publication.
 
 ## Exécution de développement
 
@@ -34,6 +37,8 @@ il doit donc être unique pour chaque instance concurrente du worker.
 `WORKER_HEARTBEAT_SECONDS` doit être strictement inférieur à
 `WORKER_LEASE_SECONDS` ; un renouvellement refusé interrompt la tentative sans
 finaliser ni acquitter son message.
+`MAX_ATTEMPTS` compte la tentative initiale : avec la valeur `3`, les tentatives
+portent les indices `0`, `1` et `2`.
 
 ## Tests
 

@@ -1,6 +1,30 @@
 from uuid import UUID
 
 from transcribe_ai_shared.database.models import JobType
+from transcribe_ai_shared.worker.failure_code import (
+    normalize_transcription_error_code,
+)
+from transcribe_ai_shared.worker.models import ClassifiedTranscriptionFailure
+
+
+class RetryableTranscriptionError(RuntimeError):
+    """Erreur moteur transitoire pouvant faire l'objet d'une nouvelle tentative."""
+
+    def __init__(self, error_code: str) -> None:
+        self.error_code = normalize_transcription_error_code(error_code)
+        super().__init__(
+            f"La transcription a rencontré l'erreur retryable {self.error_code}."
+        )
+
+
+class PermanentTranscriptionError(RuntimeError):
+    """Erreur moteur déterministe qui ne doit pas être rejouée."""
+
+    def __init__(self, error_code: str) -> None:
+        self.error_code = normalize_transcription_error_code(error_code)
+        super().__init__(
+            f"La transcription a rencontré l'erreur permanente {self.error_code}."
+        )
 
 
 class TranscriptionExecutionError(RuntimeError):
@@ -10,9 +34,11 @@ class TranscriptionExecutionError(RuntimeError):
         self,
         job_uuid: UUID,
         redis_message_id: str,
+        failure: ClassifiedTranscriptionFailure,
     ) -> None:
         self.job_uuid = job_uuid
         self.redis_message_id = redis_message_id
+        self.failure = failure
         super().__init__(
             f"La transcription du job {job_uuid} issue du message "
             f"Redis {redis_message_id} a échoué."
@@ -93,4 +119,30 @@ class TranscriptionCompletionRejectedError(RuntimeError):
         super().__init__(
             f"La finalisation du job {job_uuid} a été refusée pour le worker "
             f"{worker_id} et la tentative {expected_attempt_count}."
+        )
+
+
+class TranscriptionFailureTransitionError(RuntimeError):
+    """Signale une panne SQLAlchemy pendant la résolution durable d'un échec."""
+
+    def __init__(self, job_uuid: UUID) -> None:
+        self.job_uuid = job_uuid
+        super().__init__(f"La résolution de l'échec du job {job_uuid} a échoué.")
+
+
+class TranscriptionFailureTransitionRejectedError(RuntimeError):
+    """Signale que le worker ne possède plus la tentative à faire évoluer."""
+
+    def __init__(
+        self,
+        job_uuid: UUID,
+        worker_id: str,
+        expected_attempt_count: int,
+    ) -> None:
+        self.job_uuid = job_uuid
+        self.worker_id = worker_id
+        self.expected_attempt_count = expected_attempt_count
+        super().__init__(
+            f"La résolution de l'échec du job {job_uuid} a été refusée pour "
+            f"le worker {worker_id} et la tentative {expected_attempt_count}."
         )

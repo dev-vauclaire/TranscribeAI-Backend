@@ -3,7 +3,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import NoReturn
 
-from transcribe_ai_shared.database.models import JobType
+from transcribe_ai_shared.database.models import JobStatus, JobType
 from transcribe_ai_shared.queue.models import ReceivedJobStreamMessage
 from transcribe_ai_shared.queue.protocols import TranscriptionStreams
 from transcribe_ai_shared.worker.exceptions import (
@@ -12,17 +12,24 @@ from transcribe_ai_shared.worker.exceptions import (
     WorkerJobTypeMismatchError,
     WorkerLeaseLostError,
 )
+from transcribe_ai_shared.worker.failure_classification import (
+    classify_transcription_failure,
+)
 from transcribe_ai_shared.worker.models import (
     ClaimedJob,
+    ClassifiedTranscriptionFailure,
     TranscriptionOutput,
     WorkerClaimRejected,
     WorkerCompleted,
+    WorkerFailed,
     WorkerIdle,
     WorkerProcessResult,
+    WorkerRetryScheduled,
 )
 from transcribe_ai_shared.worker.protocols import (
     Transcriber,
     TranscriptionCompleter,
+    TranscriptionFailureHandler,
     WorkerJobStore,
 )
 
@@ -41,6 +48,7 @@ class WorkerRuntime:
         job_store: WorkerJobStore,
         transcriber: Transcriber,
         completer: TranscriptionCompleter,
+        failure_handler: TranscriptionFailureHandler,
         job_type: JobType,
         group_name: str,
         worker_id: str,
@@ -69,6 +77,7 @@ class WorkerRuntime:
         self._job_store = job_store
         self._transcriber = transcriber
         self._completer = completer
+        self._failure_handler = failure_handler
         self._job_type = job_type
         self._group_name = group_name
         self._worker_id = worker_id
@@ -104,7 +113,7 @@ class WorkerRuntime:
     async def process_message(
         self,
         message: ReceivedJobStreamMessage,
-    ) -> WorkerClaimRejected | WorkerCompleted:
+    ) -> WorkerClaimRejected | WorkerCompleted | WorkerRetryScheduled | WorkerFailed:
         """Traite un message nouveau ou récupéré en respectant COMMIT puis ACK."""
         if message.job_type is not self._job_type:
             raise WorkerJobTypeMismatchError(
@@ -129,21 +138,69 @@ class WorkerRuntime:
                 removed_from_stream=removed,
             )
 
-        output = await self._transcribe_with_heartbeat(claimed_job, message)
+        try:
+            output = await self._transcribe_with_heartbeat(claimed_job, message)
+        except TranscriptionExecutionError as error:
+            failure = error.failure
+        else:
+            await self._completer.complete(
+                job=claimed_job,
+                worker_id=self._worker_id,
+                output=output,
+            )
+            removed = await self._streams.ack_and_delete(
+                self._group_name,
+                message,
+            )
+            return WorkerCompleted(
+                message=message,
+                job=claimed_job,
+                output=output,
+                removed_from_stream=removed,
+            )
 
-        await self._completer.complete(
-            job=claimed_job,
-            worker_id=self._worker_id,
-            output=output,
+        # Quitter le bloc ``except`` détache les éventuelles erreurs SQL/Redis
+        # du message brut de l'exception moteur conservé comme cause interne.
+        return await self._resolve_transcription_failure(
+            message,
+            claimed_job,
+            failure,
         )
+
+    async def _resolve_transcription_failure(
+        self,
+        message: ReceivedJobStreamMessage,
+        job: ClaimedJob,
+        failure: ClassifiedTranscriptionFailure,
+    ) -> WorkerRetryScheduled | WorkerFailed:
+        """Persiste l'échec avant de supprimer l'ancien message Redis."""
+        resolution = await self._failure_handler.handle(
+            job=job,
+            worker_id=self._worker_id,
+            failure=failure,
+        )
+
+        if resolution.status not in {JobStatus.QUEUED, JobStatus.FAILED}:
+            raise ValueError(
+                "Le gestionnaire d'échec doit retourner un statut QUEUED ou FAILED"
+            )
+
         removed = await self._streams.ack_and_delete(
             self._group_name,
             message,
         )
-        return WorkerCompleted(
+        if resolution.status is JobStatus.QUEUED:
+            return WorkerRetryScheduled(
+                message=message,
+                job=job,
+                failure=failure,
+                next_attempt_count=resolution.attempt_count,
+                removed_from_stream=removed,
+            )
+        return WorkerFailed(
             message=message,
-            job=claimed_job,
-            output=output,
+            job=job,
+            failure=failure,
             removed_from_stream=removed,
         )
 
@@ -304,6 +361,7 @@ class WorkerRuntime:
             raise TranscriptionExecutionError(
                 job.job_uuid,
                 message.redis_message_id,
+                classify_transcription_failure(error),
             ) from error
         raise error
 

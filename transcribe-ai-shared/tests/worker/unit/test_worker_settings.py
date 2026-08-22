@@ -62,6 +62,7 @@ def test_worker_settings_require_worker_id():
         ("worker_lease_seconds", 0, "greater_than"),
         ("worker_heartbeat_seconds", 0, "greater_than"),
         ("max_attempts", 0, "greater_than_equal"),
+        ("max_attempts", 2_147_483_649, "less_than_equal"),
     ],
 )
 def test_worker_settings_reject_invalid_values(

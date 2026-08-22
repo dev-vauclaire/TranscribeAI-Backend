@@ -26,12 +26,16 @@ Le sous-package `storage` sépare explicitement ses responsabilités :
 Le sous-package `worker` suit le même découpage :
 
 - `models.py` contient les snapshots et résultats détachés ;
-- `protocols.py` décrit le `Transcriber` et le port PostgreSQL minimal ;
+- `protocols.py` décrit le `Transcriber` et les ports consommés par le runtime ;
 - `postgresql.py` adapte les opérations de claim et de renouvellement de lease
   à des transactions courtes ;
-- `runtime.py` porte le flux consume, claim et transcribe ;
+- `runtime.py` orchestre consommation, claim, inférence et confirmation Redis ;
 - `completion.py` persiste le résultat et clôture le job dans une transaction
   PostgreSQL unique ;
+- `failure_classification.py` traduit les erreurs du moteur en erreurs
+  retryables ou permanentes sans conserver leur message ;
+- `failure_code.py` borne et valide les codes d'erreur persistables ;
+- `failure.py` persiste atomiquement la requeue ou l'échec terminal ;
 - `application.py` compose et ferme les adaptateurs partagés ;
 - `testing.py` contient uniquement le fake explicitement destiné au
   développement et aux tests.
@@ -120,10 +124,10 @@ persisté dans `TranscriptionJob.audio_uri`.
   `aclose()` lors de son arrêt afin de libérer le pool de connexions Redis.
 - `WorkerRuntime` orchestre une seule itération commune à FAST et BATCH :
   consommation d'un message, claim PostgreSQL atomique, appel du `Transcriber`,
-  finalisation PostgreSQL, puis ACK Redis. `run_worker` porte la boucle, la
-  composition et la fermeture des ressources communes ; chaque application
-  choisit uniquement son `JobType` et son moteur. Le moteur ML pourra ainsi
-  rester chargé entre deux messages.
+  transition PostgreSQL terminale ou de retry, puis ACK Redis. `run_worker`
+  porte la boucle, la composition et la fermeture des ressources communes ;
+  chaque application choisit uniquement son `JobType` et son moteur. Le moteur
+  ML pourra ainsi rester chargé entre deux messages.
 - `PostgresWorkerJobStore` committe le claim dans une transaction courte avant
   de rendre un snapshot détaché au runtime. Aucune transaction PostgreSQL ne
   reste donc ouverte pendant le traitement audio. Il vérifie aussi, avant le
@@ -152,13 +156,27 @@ persisté dans `TranscriptionJob.audio_uri`.
   dernière frontière laisse un job `COMPLETED` et un message pending ; lors de
   sa récupération, le claim est refusé et le message est supprimé sans seconde
   inférence. Le service de finalisation ne connaît pas Redis.
-- Un payload invalide ou une exception du transcriber reste dans la PEL. Cette
-  étape ne définit volontairement ni poison queue, ni retry métier, ni politique
-  `XAUTOCLAIM` automatique. `WorkerRuntime.process_message()` permet toutefois
-  de traiter par le même chemin un message récupéré avec cette primitive. Le
-  composant qui déclenchera cette récupération devra encore distinguer un job
-  terminal ou une tentative obsolète d'un job `PROCESSING` dont le lease est
-  toujours valide ; cette politique de reprise n'appartient pas à cette étape.
+- Une erreur explicite du `Transcriber` est classée retryable ou permanente.
+  Une exception inconnue est retryable avec le code générique non sensible
+  `TRANSCRIPTION_UNEXPECTED_ERROR` ; son message n'est jamais persisté. Les
+  erreurs explicites doivent fournir un code stable en majuscules, chiffres et
+  `_`, limité à 128 caractères : un message brut ou un chemin est refusé.
+  `TranscriptionFailureService` vérifie le propriétaire et l'`attempt_count`
+  de la tentative active. Une erreur retryable avec des exécutions restantes
+  replace le job en `QUEUED`, incrémente `attempt_count`, réarme
+  `dispatch_required` et libère le lease dans une seule transaction. Une erreur
+  permanente ou la dernière exécution autorisée place le job en `FAILED` sans
+  redispatch. `MAX_ATTEMPTS` compte l'exécution initiale : avec `3`, les index
+  autorisés sont `0`, `1` et `2`.
+- L'ancien message Redis est acquitté et supprimé uniquement après le commit de
+  cette transition. Le dispatcher publie ensuite un nouveau message pour la
+  nouvelle tentative. Une erreur SQL, un commit incertain ou un CAS refusé
+  laisse l'ancien message dans la PEL ; aucune stratégie métier ne repose sur
+  `XNACK`.
+- Un payload invalide reste dans la PEL. `WorkerRuntime.process_message()`
+  permet de traiter par le même chemin un message récupéré avec `XAUTOCLAIM`,
+  mais la politique de balayage automatique des messages pending reste hors de
+  ce runtime.
 - `FakeTranscriber` est disponible uniquement depuis le module explicite
   `transcribe_ai_shared.worker.testing`. Les applications refusent de
   l'activer sans un opt-in d'environnement de développement.

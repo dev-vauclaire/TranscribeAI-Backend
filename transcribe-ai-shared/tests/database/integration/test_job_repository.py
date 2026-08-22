@@ -876,9 +876,16 @@ async def test_mutations_refuse_an_unknown_job(async_session_factory) -> None:
             0,
         )
         requeued = await repository.requeue_expired_job(unknown_uuid)
+        requeued_after_failure = await repository.requeue_after_failure(
+            unknown_uuid,
+            "worker-fast-1",
+            0,
+            "TRANSCRIPTION_TEMPORARY_FAILURE",
+        )
         failed = await repository.mark_failed(
             unknown_uuid,
             "worker-fast-1",
+            0,
             "MODEL_ERROR",
         )
         completed = await repository.mark_completed(
@@ -890,6 +897,7 @@ async def test_mutations_refuse_an_unknown_job(async_session_factory) -> None:
     assert claimed is None
     assert renewed is False
     assert requeued is None
+    assert requeued_after_failure is False
     assert failed is False
     assert completed is False
 
@@ -916,45 +924,74 @@ async def test_requeue_expired_job_only_increments_once(
     assert saved.attempt_count == 1
 
 
-async def test_mark_failed_updates_a_job_owned_by_the_worker(
+async def test_requeue_after_failure_resets_lease_and_increments_attempt_count(
     async_session_factory,
 ) -> None:
+    last_dispatched_at = NOW - timedelta(minutes=20)
     job_uuid = await persist_job(
         async_session_factory,
         status=JobStatus.PROCESSING,
+        dispatch_required=False,
+        last_dispatched_at=last_dispatched_at,
         lease_owner="worker-fast-1",
-        lease_expires_at=NOW + timedelta(minutes=5),
+        lease_expires_at=ACTIVE_LEASE_EXPIRATION,
+        attempt_count=2,
+        last_error="PREVIOUS_FAILURE",
     )
 
     async with async_session_factory.begin() as session:
-        failed = await JobRepository(session).mark_failed(
+        requeued = await JobRepository(session).requeue_after_failure(
             job_uuid,
             "worker-fast-1",
-            "MODEL_ERROR",
+            2,
+            "TRANSCRIPTION_TEMPORARY_FAILURE",
         )
 
     saved = await read_job(async_session_factory, job_uuid)
-    assert failed is True
+    assert requeued is True
     assert saved is not None
-    assert saved.status is JobStatus.FAILED
-    assert saved.last_error == "MODEL_ERROR"
-    assert saved.completed_at is not None
-    assert saved.completed_at.tzinfo is not None
+    assert saved.status is JobStatus.QUEUED
+    assert saved.attempt_count == 3
+    assert saved.dispatch_required is True
+    assert saved.last_dispatched_at == last_dispatched_at
+    assert saved.lease_owner is None
+    assert saved.lease_expires_at is None
+    assert saved.last_error == "TRANSCRIPTION_TEMPORARY_FAILURE"
+    assert saved.completed_at is None
 
 
 @pytest.mark.parametrize(
-    ("status", "requesting_owner"),
+    "transition",
+    ["requeue", "fail"],
+)
+@pytest.mark.parametrize(
+    (
+        "status",
+        "requesting_owner",
+        "expected_attempt_count",
+        "lease_expires_at",
+    ),
     [
-        (JobStatus.QUEUED, "worker-fast-1"),
-        (JobStatus.COMPLETED, "worker-fast-1"),
-        (JobStatus.FAILED, "worker-fast-1"),
-        (JobStatus.PROCESSING, "worker-fast-2"),
+        (JobStatus.QUEUED, "worker-fast-1", 3, ACTIVE_LEASE_EXPIRATION),
+        (JobStatus.COMPLETED, "worker-fast-1", 3, ACTIVE_LEASE_EXPIRATION),
+        (JobStatus.FAILED, "worker-fast-1", 3, ACTIVE_LEASE_EXPIRATION),
+        (JobStatus.PROCESSING, "worker-fast-2", 3, ACTIVE_LEASE_EXPIRATION),
+        (JobStatus.PROCESSING, "worker-fast-1", 2, ACTIVE_LEASE_EXPIRATION),
+        (
+            JobStatus.PROCESSING,
+            "worker-fast-1",
+            3,
+            datetime.now(timezone.utc) - timedelta(minutes=5),
+        ),
     ],
 )
-async def test_mark_failed_refuses_an_invalid_status_or_owner(
+async def test_failure_transitions_refuse_stale_or_invalid_claims(
     async_session_factory,
+    transition: str,
     status: JobStatus,
     requesting_owner: str,
+    expected_attempt_count: int,
+    lease_expires_at: datetime,
 ) -> None:
     previous_completed_at = (
         NOW - timedelta(hours=1)
@@ -965,24 +1002,173 @@ async def test_mark_failed_refuses_an_invalid_status_or_owner(
         async_session_factory,
         status=status,
         lease_owner="worker-fast-1",
-        lease_expires_at=NOW + timedelta(minutes=5),
+        lease_expires_at=lease_expires_at,
+        attempt_count=3,
+        dispatch_required=False,
+        last_error="PREVIOUS_FAILURE",
         completed_at=previous_completed_at,
+    )
+
+    async with async_session_factory.begin() as session:
+        repository = JobRepository(session)
+        if transition == "requeue":
+            transitioned = await repository.requeue_after_failure(
+                job_uuid,
+                requesting_owner,
+                expected_attempt_count,
+                "NEW_FAILURE",
+            )
+        else:
+            transitioned = await repository.mark_failed(
+                job_uuid,
+                requesting_owner,
+                expected_attempt_count,
+                "NEW_FAILURE",
+            )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert transitioned is False
+    assert saved is not None
+    assert saved.status is status
+    assert saved.attempt_count == 3
+    assert saved.dispatch_required is False
+    assert saved.last_error == "PREVIOUS_FAILURE"
+    assert saved.lease_owner == "worker-fast-1"
+    assert saved.lease_expires_at == lease_expires_at
+    assert saved.completed_at == previous_completed_at
+
+
+async def test_requeue_after_failure_does_not_commit_the_callers_transaction(
+    async_session_factory,
+) -> None:
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        dispatch_required=False,
+        lease_owner="worker-fast-1",
+        lease_expires_at=ACTIVE_LEASE_EXPIRATION,
+        attempt_count=2,
+    )
+
+    with pytest.raises(RuntimeError, match="rollback requested"):
+        async with async_transaction(async_session_factory) as session:
+            requeued = await JobRepository(session).requeue_after_failure(
+                job_uuid,
+                "worker-fast-1",
+                2,
+                "TRANSCRIPTION_TEMPORARY_FAILURE",
+            )
+            assert requeued is True
+            raise RuntimeError("rollback requested")
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert saved is not None
+    assert saved.status is JobStatus.PROCESSING
+    assert saved.attempt_count == 2
+    assert saved.dispatch_required is False
+    assert saved.lease_owner == "worker-fast-1"
+    assert saved.lease_expires_at == ACTIVE_LEASE_EXPIRATION
+    assert saved.last_error is None
+
+
+async def test_two_failure_requeues_increment_the_attempt_only_once(
+    async_session_factory,
+) -> None:
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        dispatch_required=False,
+        lease_owner="worker-fast-1",
+        lease_expires_at=ACTIVE_LEASE_EXPIRATION,
+        attempt_count=2,
+    )
+
+    async def requeue() -> bool:
+        async with async_session_factory.begin() as session:
+            return await JobRepository(session).requeue_after_failure(
+                job_uuid,
+                "worker-fast-1",
+                2,
+                "TRANSCRIPTION_TEMPORARY_FAILURE",
+            )
+
+    outcomes = await asyncio.wait_for(
+        asyncio.gather(requeue(), requeue()),
+        timeout=10,
+    )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert sorted(outcomes) == [False, True]
+    assert saved is not None
+    assert saved.status is JobStatus.QUEUED
+    assert saved.attempt_count == 3
+
+
+async def test_mark_failed_updates_only_the_current_owned_attempt(
+    async_session_factory,
+) -> None:
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        dispatch_required=True,
+        lease_owner="worker-fast-1",
+        lease_expires_at=ACTIVE_LEASE_EXPIRATION,
+        attempt_count=2,
     )
 
     async with async_session_factory.begin() as session:
         failed = await JobRepository(session).mark_failed(
             job_uuid,
-            requesting_owner,
-            "MODEL_ERROR",
+            "worker-fast-1",
+            2,
+            "TRANSCRIPTION_PERMANENT_FAILURE",
         )
 
     saved = await read_job(async_session_factory, job_uuid)
-    assert failed is False
+    assert failed is True
     assert saved is not None
-    assert saved.status is status
-    assert saved.last_error is None
+    assert saved.status is JobStatus.FAILED
+    assert saved.attempt_count == 2
+    assert saved.dispatch_required is False
+    assert saved.lease_owner is None
+    assert saved.lease_expires_at is None
+    assert saved.last_error == "TRANSCRIPTION_PERMANENT_FAILURE"
+    assert saved.completed_at is not None
+    assert saved.completed_at.tzinfo is not None
+
+
+async def test_mark_failed_does_not_commit_the_callers_transaction(
+    async_session_factory,
+) -> None:
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        dispatch_required=True,
+        lease_owner="worker-fast-1",
+        lease_expires_at=ACTIVE_LEASE_EXPIRATION,
+        attempt_count=2,
+    )
+
+    with pytest.raises(RuntimeError, match="rollback requested"):
+        async with async_transaction(async_session_factory) as session:
+            failed = await JobRepository(session).mark_failed(
+                job_uuid,
+                "worker-fast-1",
+                2,
+                "TRANSCRIPTION_PERMANENT_FAILURE",
+            )
+            assert failed is True
+            raise RuntimeError("rollback requested")
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert saved is not None
+    assert saved.status is JobStatus.PROCESSING
+    assert saved.attempt_count == 2
+    assert saved.dispatch_required is True
     assert saved.lease_owner == "worker-fast-1"
-    assert saved.completed_at == previous_completed_at
+    assert saved.lease_expires_at == ACTIVE_LEASE_EXPIRATION
+    assert saved.last_error is None
+    assert saved.completed_at is None
 
 
 async def test_mark_completed_updates_a_job_owned_by_the_worker(

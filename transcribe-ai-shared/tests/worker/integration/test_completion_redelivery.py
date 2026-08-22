@@ -13,6 +13,7 @@ from transcribe_ai_shared import (
     PostgresWorkerJobStore,
     ResultRepository,
     TranscriptionCompletionService,
+    TranscriptionFailureService,
     TranscriptionJob,
     TranscriptionOutput,
     TranscriptionStreams,
@@ -106,6 +107,10 @@ def make_runtime(
         ),
         transcriber=transcriber,
         completer=TranscriptionCompletionService(session_factory),
+        failure_handler=TranscriptionFailureService(
+            session_factory,
+            max_attempts=3,
+        ),
         job_type=JobType.FAST,
         group_name=GROUP_NAME,
         worker_id=worker_id,

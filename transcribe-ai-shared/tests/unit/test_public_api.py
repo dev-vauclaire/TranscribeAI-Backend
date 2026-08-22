@@ -10,6 +10,7 @@ from transcribe_ai_shared import (
     AutoClaimResult,
     AsyncSessionFactory,
     ClaimedJob,
+    ClassifiedTranscriptionFailure,
     DatabaseSettings,
     FileSystemAudioStorage,
     InvalidAudioLocationError,
@@ -18,6 +19,7 @@ from transcribe_ai_shared import (
     JobStreamMessage,
     JobStatus,
     JobType,
+    PermanentTranscriptionError,
     PostgresWorkerJobStore,
     RedisConnectionError,
     RedisOperationError,
@@ -25,6 +27,7 @@ from transcribe_ai_shared import (
     RedisTranscriptionStreams,
     ReceivedJobStreamMessage,
     ResultRepository,
+    RetryableTranscriptionError,
     SessionFactory,
     StorageScanResult,
     StorageSettings,
@@ -35,6 +38,12 @@ from transcribe_ai_shared import (
     TranscriptionCompletionRejectedError,
     TranscriptionCompletionService,
     TranscriptionExecutionError,
+    TranscriptionFailureCategory,
+    TranscriptionFailureHandler,
+    TranscriptionFailureResolution,
+    TranscriptionFailureService,
+    TranscriptionFailureTransitionError,
+    TranscriptionFailureTransitionRejectedError,
     TranscriptionOutput,
     TranscriptionJob,
     TranscriptionJobSchema,
@@ -44,16 +53,19 @@ from transcribe_ai_shared import (
     TranscriptionStreams,
     WorkerClaimRejected,
     WorkerCompleted,
+    WorkerFailed,
     WorkerHeartbeatError,
     WorkerIdle,
     WorkerJobStore,
     WorkerJobTypeMismatchError,
     WorkerLeaseLostError,
     WorkerProcessResult,
+    WorkerRetryScheduled,
     WorkerRuntime,
     WorkerSettings,
     async_transaction,
     check_postgres_connection,
+    classify_transcription_failure,
     create_async_db_engine,
     create_async_session_factory,
     create_db_engine,
@@ -77,6 +89,7 @@ def test_supported_public_imports_are_available():
     assert AutoClaimResult is not None
     assert AsyncSessionFactory is not None
     assert ClaimedJob is not None
+    assert ClassifiedTranscriptionFailure is not None
     assert DatabaseSettings is not None
     assert FileSystemAudioStorage is not None
     assert InvalidAudioLocationError is not None
@@ -85,6 +98,7 @@ def test_supported_public_imports_are_available():
     assert JobType is not None
     assert JobRepository is not None
     assert JobStreamMessage is not None
+    assert PermanentTranscriptionError is not None
     assert PostgresWorkerJobStore is not None
     assert ReceivedJobStreamMessage is not None
     assert RedisConnectionError is not None
@@ -92,6 +106,7 @@ def test_supported_public_imports_are_available():
     assert RedisSettings is not None
     assert RedisTranscriptionStreams is not None
     assert ResultRepository is not None
+    assert RetryableTranscriptionError is not None
     assert SessionFactory is not None
     assert StorageScanResult is not None
     assert StorageSettings is not None
@@ -102,6 +117,12 @@ def test_supported_public_imports_are_available():
     assert TranscriptionCompletionRejectedError is not None
     assert TranscriptionCompletionService is not None
     assert TranscriptionExecutionError is not None
+    assert TranscriptionFailureCategory is not None
+    assert TranscriptionFailureHandler is not None
+    assert TranscriptionFailureResolution is not None
+    assert TranscriptionFailureService is not None
+    assert TranscriptionFailureTransitionError is not None
+    assert TranscriptionFailureTransitionRejectedError is not None
     assert TranscriptionOutput is not None
     assert TranscriptionJob is not None
     assert TranscriptionJobSchema is not None
@@ -111,16 +132,19 @@ def test_supported_public_imports_are_available():
     assert TranscriptionStreams is not None
     assert WorkerClaimRejected is not None
     assert WorkerCompleted is not None
+    assert WorkerFailed is not None
     assert WorkerHeartbeatError is not None
     assert WorkerIdle is not None
     assert WorkerJobStore is not None
     assert WorkerJobTypeMismatchError is not None
     assert WorkerLeaseLostError is not None
     assert WorkerProcessResult is not None
+    assert WorkerRetryScheduled is not None
     assert WorkerRuntime is not None
     assert WorkerSettings is not None
     assert async_transaction is not None
     assert check_postgres_connection is not None
+    assert classify_transcription_failure is not None
     assert create_async_db_engine is not None
     assert create_async_session_factory is not None
     assert create_db_engine is not None

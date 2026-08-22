@@ -9,6 +9,7 @@ from transcribe_ai_shared.database.session import create_async_session_factory
 from transcribe_ai_shared.queue.config import RedisSettings
 from transcribe_ai_shared.queue.redis_streams import RedisTranscriptionStreams
 from transcribe_ai_shared.worker.completion import TranscriptionCompletionService
+from transcribe_ai_shared.worker.failure import TranscriptionFailureService
 from transcribe_ai_shared.worker.models import WorkerProcessResult
 from transcribe_ai_shared.worker.postgresql import PostgresWorkerJobStore
 from transcribe_ai_shared.worker.protocols import Transcriber
@@ -46,6 +47,10 @@ async def run_worker(
                 ),
                 transcriber=transcriber,
                 completer=TranscriptionCompletionService(session_factory),
+                failure_handler=TranscriptionFailureService(
+                    session_factory,
+                    max_attempts=worker_settings.max_attempts,
+                ),
                 job_type=job_type,
                 group_name=worker_settings.worker_consumer_group,
                 worker_id=worker_settings.worker_id,
