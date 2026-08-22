@@ -30,6 +30,16 @@ class WorkerJobStore(Protocol):
         """Réserve atomiquement un job ou refuse un message devenu obsolète."""
         ...
 
+    async def renew_lease(
+        self,
+        job_uuid: UUID,
+        worker_id: str,
+        lease_expires_at: datetime,
+        expected_attempt_count: int,
+    ) -> bool:
+        """Prolonge la tentative encore détenue ou signale sa perte."""
+        ...
+
 
 class TranscriptionCompleter(Protocol):
     """Port de finalisation durable appelé après une inférence réussie."""

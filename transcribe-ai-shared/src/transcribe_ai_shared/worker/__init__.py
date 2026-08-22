@@ -4,7 +4,9 @@ from transcribe_ai_shared.worker.exceptions import (
     TranscriptionCompletionError,
     TranscriptionCompletionRejectedError,
     TranscriptionExecutionError,
+    WorkerHeartbeatError,
     WorkerJobTypeMismatchError,
+    WorkerLeaseLostError,
 )
 from transcribe_ai_shared.worker.models import (
     ClaimedJob,
@@ -35,9 +37,11 @@ __all__ = [
     "TranscriptionOutput",
     "WorkerClaimRejected",
     "WorkerCompleted",
+    "WorkerHeartbeatError",
     "WorkerIdle",
     "WorkerJobStore",
     "WorkerJobTypeMismatchError",
+    "WorkerLeaseLostError",
     "WorkerProcessResult",
     "WorkerRuntime",
     "WorkerSettings",

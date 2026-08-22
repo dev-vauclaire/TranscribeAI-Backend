@@ -19,7 +19,7 @@ from transcribe_ai_shared.worker.models import ClaimedJob
 from transcribe_ai_shared.worker.protocols import WorkerJobStore
 
 
-class _ClaimRepository(Protocol):
+class _WorkerJobRepository(Protocol):
     async def claim(
         self,
         job_uuid: UUID,
@@ -28,12 +28,20 @@ class _ClaimRepository(Protocol):
         expected_attempt_count: int,
     ) -> TranscriptionJob | None: ...
 
+    async def renew_lease(
+        self,
+        job_uuid: UUID,
+        worker_id: str,
+        lease_expires_at: datetime,
+        expected_attempt_count: int,
+    ) -> bool: ...
 
-_RepositoryFactory: TypeAlias = Callable[[AsyncSession], _ClaimRepository]
+
+_RepositoryFactory: TypeAlias = Callable[[AsyncSession], _WorkerJobRepository]
 
 
 class PostgresWorkerJobStore(WorkerJobStore):
-    """Adapte le repository SQLAlchemy à une transaction courte de claim."""
+    """Adapte les opérations de lease à des transactions PostgreSQL courtes."""
 
     def __init__(
         self,
@@ -84,4 +92,21 @@ class PostgresWorkerJobStore(WorkerJobStore):
                 job_type=job.job_type,
                 attempt_count=job.attempt_count,
                 audio_location=audio_location,
+            )
+
+    async def renew_lease(
+        self,
+        job_uuid: UUID,
+        worker_id: str,
+        lease_expires_at: datetime,
+        expected_attempt_count: int,
+    ) -> bool:
+        """Committe un renouvellement isolé sans garder de transaction ouverte."""
+        async with async_transaction(self._session_factory) as session:
+            repository = self._repository_factory(session)
+            return await repository.renew_lease(
+                job_uuid,
+                worker_id,
+                lease_expires_at,
+                expected_attempt_count,
             )

@@ -11,6 +11,7 @@ SETTING_ENV_NAMES = (
     "WORKER_CONSUMER_GROUP",
     "WORKER_BLOCK_MILLISECONDS",
     "WORKER_LEASE_SECONDS",
+    "WORKER_HEARTBEAT_SECONDS",
     "MAX_ATTEMPTS",
     "WORKER_ENVIRONMENT",
     "WORKER_TRANSCRIBER_BACKEND",
@@ -30,6 +31,7 @@ def test_settings_default_to_production_without_a_transcriber_backend() -> None:
     assert settings.worker_transcriber_backend is None
     assert settings.worker_consumer_group == "transcription-workers"
     assert settings.worker_block_milliseconds == 5_000
+    assert settings.worker_heartbeat_seconds == 60
 
 
 def test_settings_read_worker_environment_variables(
@@ -39,6 +41,7 @@ def test_settings_read_worker_environment_variables(
     monkeypatch.setenv("WORKER_CONSUMER_GROUP", "fast-workers")
     monkeypatch.setenv("WORKER_BLOCK_MILLISECONDS", "250")
     monkeypatch.setenv("WORKER_LEASE_SECONDS", "120")
+    monkeypatch.setenv("WORKER_HEARTBEAT_SECONDS", "30")
     monkeypatch.setenv("MAX_ATTEMPTS", "5")
     monkeypatch.setenv("WORKER_ENVIRONMENT", "development")
     monkeypatch.setenv("WORKER_TRANSCRIBER_BACKEND", "fake")
@@ -49,6 +52,7 @@ def test_settings_read_worker_environment_variables(
     assert settings.worker_consumer_group == "fast-workers"
     assert settings.worker_block_milliseconds == 250
     assert settings.worker_lease_seconds == 120
+    assert settings.worker_heartbeat_seconds == 30
     assert settings.max_attempts == 5
     assert settings.worker_environment == "development"
     assert settings.worker_transcriber_backend == "fake"

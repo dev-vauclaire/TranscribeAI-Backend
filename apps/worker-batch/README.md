@@ -3,10 +3,11 @@
 Cette application consomme les nouveaux messages du stream
 `transcription:batch` un par un, tente leur claim PostgreSQL puis délègue le
 traitement au transcriber injecté. La boucle conserve les connexions et le
-transcriber entre deux messages. Après une inférence réussie, le résultat et
-l'état `COMPLETED` sont committés ensemble avant l'ACK Redis. Elle ne contient
-aucune dépendance FastAPI ou Flask et n'implémente pas encore le retry, la
-diarization ou le moteur ML réel.
+transcriber entre deux messages. Pendant l'inférence, elle renouvelle le lease
+PostgreSQL selon `WORKER_HEARTBEAT_SECONDS`. Après une inférence réussie, le
+résultat et l'état `COMPLETED` sont committés ensemble avant l'ACK Redis. Elle ne
+contient aucune dépendance FastAPI ou Flask et n'implémente pas encore le retry,
+la diarization ou le moteur ML réel.
 
 ## Exécution de développement
 
@@ -30,6 +31,9 @@ uv run --package worker-batch worker-batch
 Les autres variables sont documentées dans `.env.example`. `WORKER_ID` sert à
 la fois d'identifiant de consumer Redis et de propriétaire du lease PostgreSQL ;
 il doit donc être unique pour chaque instance concurrente du worker.
+`WORKER_HEARTBEAT_SECONDS` doit être strictement inférieur à
+`WORKER_LEASE_SECONDS` ; un renouvellement refusé interrompt la tentative sans
+finaliser ni acquitter son message.
 
 ## Tests
 

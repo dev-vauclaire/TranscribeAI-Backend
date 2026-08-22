@@ -1,6 +1,6 @@
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import Field, StringConstraints
+from pydantic import Field, StringConstraints, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,4 +30,15 @@ class WorkerSettings(BaseSettings):
     # RedisTranscriptionStreams utilise actuellement un timeout socket de 10 s.
     worker_block_milliseconds: int = Field(default=5_000, gt=0, lt=10_000)
     worker_lease_seconds: int = Field(default=300, gt=0)
+    worker_heartbeat_seconds: int = Field(default=60, gt=0)
     max_attempts: int = Field(default=3, ge=1)
+
+    @model_validator(mode="after")
+    def validate_heartbeat_interval(self) -> Self:
+        """Garantit au heartbeat une marge avant l'expiration du lease."""
+        if self.worker_heartbeat_seconds >= self.worker_lease_seconds:
+            raise ValueError(
+                "WORKER_HEARTBEAT_SECONDS doit être strictement inférieur "
+                "à WORKER_LEASE_SECONDS"
+            )
+        return self

@@ -27,7 +27,8 @@ Le sous-package `worker` suit le même découpage :
 
 - `models.py` contient les snapshots et résultats détachés ;
 - `protocols.py` décrit le `Transcriber` et le port PostgreSQL minimal ;
-- `postgresql.py` adapte `JobRepository.claim()` à une transaction courte ;
+- `postgresql.py` adapte les opérations de claim et de renouvellement de lease
+  à des transactions courtes ;
 - `runtime.py` porte le flux consume, claim et transcribe ;
 - `completion.py` persiste le résultat et clôture le job dans une transaction
   PostgreSQL unique ;
@@ -89,6 +90,7 @@ les variables d'environnement suivantes :
 | `WorkerSettings` | `WORKER_CONSUMER_GROUP` | non | `transcription-workers` |
 | `WorkerSettings` | `WORKER_BLOCK_MILLISECONDS` | non | `5000` |
 | `WorkerSettings` | `WORKER_LEASE_SECONDS` | non | `300` |
+| `WorkerSettings` | `WORKER_HEARTBEAT_SECONDS` | non | `60` |
 | `WorkerSettings` | `MAX_ATTEMPTS` | non | `3` |
 
 Le package ne charge pas implicitement de fichier `.env` : le point d'entrée de
@@ -128,6 +130,13 @@ persisté dans `TranscriptionJob.audio_uri`.
   commit, que le type PostgreSQL correspond au stream attribué au worker ; une
   entrée égarée dans le mauvais stream ne peut donc pas lancer le mauvais
   moteur.
+- Pendant l'inférence, le runtime renouvelle périodiquement le lease dans une
+  transaction courte indépendante. Le renouvellement est protégé par l'UUID,
+  le statut `PROCESSING`, le propriétaire, le numéro de tentative et une
+  échéance encore valide. Un dernier renouvellement précède la finalisation :
+  si PostgreSQL refuse l'un de ces CAS, le résultat n'est ni persisté ni
+  acquitté dans Redis. `WORKER_HEARTBEAT_SECONDS` doit être strictement
+  inférieur à `WORKER_LEASE_SECONDS`.
 - Un claim refusé couvre aussi bien un UUID inexistant qu'un doublon ou un job
   déjà traité : le runtime acquitte et supprime alors le message sans appeler
   le transcriber. Le claim compare également l'`attempt_count` porté par Redis :

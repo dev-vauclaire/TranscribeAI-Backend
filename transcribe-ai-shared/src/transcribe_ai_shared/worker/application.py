@@ -52,6 +52,9 @@ async def run_worker(
                 lease_duration=timedelta(
                     seconds=worker_settings.worker_lease_seconds,
                 ),
+                heartbeat_interval=timedelta(
+                    seconds=worker_settings.worker_heartbeat_seconds,
+                ),
             )
             await runtime.initialize()
             while True:

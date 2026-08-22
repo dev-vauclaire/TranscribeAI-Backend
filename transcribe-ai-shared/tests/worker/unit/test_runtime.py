@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 
+import transcribe_ai_shared.worker.runtime as runtime_module
 from transcribe_ai_shared import (
     AudioLocation,
     ClaimedJob,
@@ -19,9 +20,11 @@ from transcribe_ai_shared import (
     TranscriptionStreams,
     WorkerClaimRejected,
     WorkerCompleted,
+    WorkerHeartbeatError,
     WorkerIdle,
     WorkerJobStore,
     WorkerJobTypeMismatchError,
+    WorkerLeaseLostError,
     WorkerRuntime,
 )
 from transcribe_ai_shared.worker.testing import FakeTranscriber
@@ -112,11 +115,15 @@ class RecordingJobStore:
         self,
         claimed_job: ClaimedJob | None,
         *,
+        renew_outcomes: list[bool | Exception] | None = None,
         events: list[str] | None = None,
     ) -> None:
         self.claimed_job = claimed_job
+        self.renew_outcomes = list(renew_outcomes or [])
         self.events = events
         self.claim_calls: list[tuple[UUID, str, datetime, int]] = []
+        self.renew_calls: list[tuple[UUID, str, datetime, int]] = []
+        self.renewed = asyncio.Event()
 
     async def claim(
         self,
@@ -136,6 +143,29 @@ class RecordingJobStore:
             )
         )
         return self.claimed_job
+
+    async def renew_lease(
+        self,
+        job_uuid: UUID,
+        worker_id: str,
+        lease_expires_at: datetime,
+        expected_attempt_count: int,
+    ) -> bool:
+        if self.events is not None:
+            self.events.append("renew_lease")
+        self.renew_calls.append(
+            (
+                job_uuid,
+                worker_id,
+                lease_expires_at,
+                expected_attempt_count,
+            )
+        )
+        self.renewed.set()
+        outcome = self.renew_outcomes.pop(0) if self.renew_outcomes else True
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
 
 
 class RecordingCompleter:
@@ -167,14 +197,41 @@ class BlockingTranscriber:
     def __init__(self) -> None:
         self.started = asyncio.Event()
         self.release = asyncio.Event()
+        self.cancelled = asyncio.Event()
 
     async def transcribe(
         self,
         _audio_location: AudioLocation,
     ) -> TranscriptionOutput:
         self.started.set()
-        await self.release.wait()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
         return TranscriptionOutput(result={"text": "completed"})
+
+
+class ControlledSleep:
+    """Expose chaque échéance sans dépendre du temps réel dans les tests."""
+
+    def __init__(self) -> None:
+        self.calls: list[float] = []
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self._ticks: asyncio.Queue[None] = asyncio.Queue()
+
+    async def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
+        self.started.set()
+        try:
+            await self._ticks.get()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+
+    def tick(self) -> None:
+        self._ticks.put_nowait(None)
 
 
 def make_runtime(
@@ -183,7 +240,9 @@ def make_runtime(
     transcriber: Transcriber,
     *,
     completer: TranscriptionCompleter | None = None,
+    heartbeat_interval: timedelta = timedelta(minutes=1),
     clock=lambda: NOW,
+    sleep=asyncio.sleep,
 ) -> WorkerRuntime:
     return WorkerRuntime(
         streams=cast(TranscriptionStreams, streams),
@@ -194,7 +253,9 @@ def make_runtime(
         group_name=GROUP_NAME,
         worker_id=WORKER_ID,
         lease_duration=LEASE_DURATION,
+        heartbeat_interval=heartbeat_interval,
         clock=clock,
+        sleep=sleep,
     )
 
 
@@ -269,6 +330,7 @@ async def test_valid_message_is_transcribed_completed_then_acked() -> None:
         "consume",
         "claim",
         "transcribe",
+        "renew_lease",
         "complete",
         "ack_and_delete",
     ]
@@ -276,6 +338,9 @@ async def test_valid_message_is_transcribed_completed_then_acked() -> None:
         (JOB_UUID, WORKER_ID, NOW + LEASE_DURATION, 2),
     ]
     assert completer.calls == [(claimed_job, WORKER_ID, output)]
+    assert store.renew_calls == [
+        (JOB_UUID, WORKER_ID, NOW + LEASE_DURATION, 2),
+    ]
     assert streams.ack_calls == [(GROUP_NAME, message)]
 
 
@@ -470,6 +535,384 @@ async def test_message_is_not_acked_while_transcription_is_in_progress() -> None
     assert streams.ack_calls == [(GROUP_NAME, make_message())]
 
 
+async def test_heartbeat_renews_on_schedule_and_stops_after_success() -> None:
+    message = make_message()
+    streams = RecordingStreams(message)
+    store = RecordingJobStore(make_claimed_job())
+    transcriber = BlockingTranscriber()
+    controlled_sleep = ControlledSleep()
+    runtime = make_runtime(
+        streams,
+        store,
+        transcriber,
+        heartbeat_interval=timedelta(seconds=30),
+        sleep=controlled_sleep,
+    )
+
+    processing = asyncio.create_task(runtime.process_next())
+    await transcriber.started.wait()
+    await controlled_sleep.started.wait()
+
+    assert controlled_sleep.calls == [30.0]
+    assert store.renew_calls == []
+
+    controlled_sleep.tick()
+    await store.renewed.wait()
+    assert store.renew_calls == [
+        (JOB_UUID, WORKER_ID, NOW + LEASE_DURATION, 2),
+    ]
+
+    transcriber.release.set()
+    result = await processing
+
+    assert isinstance(result, WorkerCompleted)
+    assert controlled_sleep.cancelled.is_set()
+    # Un renouvellement périodique, puis le CAS final avant la finalisation.
+    assert store.renew_calls == [
+        (JOB_UUID, WORKER_ID, NOW + LEASE_DURATION, 2),
+        (JOB_UUID, WORKER_ID, NOW + LEASE_DURATION, 2),
+    ]
+
+
+async def test_heartbeat_stops_when_transcription_fails() -> None:
+    cause = RuntimeError("model unavailable")
+    controlled_sleep = ControlledSleep()
+
+    class FailingAfterHeartbeatStartsTranscriber:
+        async def transcribe(
+            self,
+            _audio_location: AudioLocation,
+        ) -> TranscriptionOutput:
+            await controlled_sleep.started.wait()
+            raise cause
+
+    streams = RecordingStreams(make_message())
+    store = RecordingJobStore(make_claimed_job())
+    completer = RecordingCompleter()
+
+    with pytest.raises(TranscriptionExecutionError) as raised:
+        await make_runtime(
+            streams,
+            store,
+            FailingAfterHeartbeatStartsTranscriber(),
+            completer=completer,
+            sleep=controlled_sleep,
+        ).process_next()
+
+    assert raised.value.__cause__ is cause
+    assert controlled_sleep.cancelled.is_set()
+    assert store.renew_calls == []
+    assert completer.calls == []
+    assert streams.ack_calls == []
+
+
+async def test_external_cancellation_during_heartbeat_cleanup_is_propagated() -> None:
+    cleanup_started = asyncio.Event()
+    allow_cleanup_to_finish = asyncio.Event()
+
+    async def sleep_with_observable_cleanup(_seconds: float) -> None:
+        """Retient le heartbeat dans son cleanup pour annuler le parent à cet instant."""
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cleanup_started.set()
+            await allow_cleanup_to_finish.wait()
+            raise
+
+    streams = RecordingStreams(make_message())
+    store = RecordingJobStore(make_claimed_job())
+    transcriber = BlockingTranscriber()
+    completer = RecordingCompleter()
+    processing = asyncio.create_task(
+        make_runtime(
+            streams,
+            store,
+            transcriber,
+            completer=completer,
+            sleep=sleep_with_observable_cleanup,
+        ).process_next()
+    )
+
+    await transcriber.started.wait()
+    transcriber.release.set()
+    await cleanup_started.wait()
+
+    processing.cancel()
+    await asyncio.sleep(0)
+    allow_cleanup_to_finish.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await processing
+
+    assert completer.calls == []
+    assert streams.ack_calls == []
+    worker_child_names = {
+        f"transcription-{JOB_UUID}",
+        f"heartbeat-{JOB_UUID}",
+    }
+    assert not any(
+        task.get_name() in worker_child_names for task in asyncio.all_tasks()
+    )
+
+
+async def test_repeated_external_cancellation_drains_both_worker_children() -> None:
+    transcription_started = asyncio.Event()
+    transcription_cleanup_started = asyncio.Event()
+    allow_transcription_cleanup = asyncio.Event()
+    heartbeat_started = asyncio.Event()
+    heartbeat_cleanup_started = asyncio.Event()
+    allow_heartbeat_cleanup = asyncio.Event()
+
+    class TranscriberWithObservableCleanup:
+        async def transcribe(
+            self,
+            _audio_location: AudioLocation,
+        ) -> TranscriptionOutput:
+            transcription_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                transcription_cleanup_started.set()
+                await allow_transcription_cleanup.wait()
+                raise
+
+    async def sleep_with_observable_cleanup(_seconds: float) -> None:
+        heartbeat_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            heartbeat_cleanup_started.set()
+            await allow_heartbeat_cleanup.wait()
+            raise
+
+    streams = RecordingStreams(make_message())
+    completer = RecordingCompleter()
+    processing = asyncio.create_task(
+        make_runtime(
+            streams,
+            RecordingJobStore(make_claimed_job()),
+            TranscriberWithObservableCleanup(),
+            completer=completer,
+            sleep=sleep_with_observable_cleanup,
+        ).process_next()
+    )
+
+    await transcription_started.wait()
+    await heartbeat_started.wait()
+    processing.cancel()
+    await transcription_cleanup_started.wait()
+
+    processing.cancel()
+    allow_transcription_cleanup.set()
+    allow_heartbeat_cleanup.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await processing
+
+    worker_child_names = {
+        f"transcription-{JOB_UUID}",
+        f"heartbeat-{JOB_UUID}",
+    }
+    pending_worker_children = [
+        task for task in asyncio.all_tasks() if task.get_name() in worker_child_names
+    ]
+    heartbeat_was_cleaned = heartbeat_cleanup_started.is_set()
+    for task in pending_worker_children:
+        task.cancel()
+    await asyncio.gather(*pending_worker_children, return_exceptions=True)
+
+    assert heartbeat_was_cleaned
+    assert pending_worker_children == []
+    assert completer.calls == []
+    assert streams.ack_calls == []
+
+
+async def test_final_lease_renewal_rejects_completion_when_lease_was_lost() -> None:
+    controlled_sleep = ControlledSleep()
+    transcriber = BlockingTranscriber()
+    store = RecordingJobStore(
+        make_claimed_job(),
+        renew_outcomes=[False],
+    )
+    streams = RecordingStreams(make_message())
+    completer = RecordingCompleter()
+    processing = asyncio.create_task(
+        make_runtime(
+            streams,
+            store,
+            transcriber,
+            completer=completer,
+            sleep=controlled_sleep,
+        ).process_next()
+    )
+
+    await transcriber.started.wait()
+    await controlled_sleep.started.wait()
+    transcriber.release.set()
+
+    with pytest.raises(WorkerLeaseLostError) as raised:
+        await processing
+
+    assert raised.value.job_uuid == JOB_UUID
+    assert raised.value.worker_id == WORKER_ID
+    assert raised.value.expected_attempt_count == 2
+    assert controlled_sleep.cancelled.is_set()
+    assert store.renew_calls == [
+        (JOB_UUID, WORKER_ID, NOW + LEASE_DURATION, 2),
+    ]
+    assert completer.calls == []
+    assert streams.ack_calls == []
+
+
+async def test_final_lease_renewal_error_preserves_cause_without_completion() -> None:
+    cause = RuntimeError("database unavailable")
+    controlled_sleep = ControlledSleep()
+    transcriber = BlockingTranscriber()
+    store = RecordingJobStore(
+        make_claimed_job(),
+        renew_outcomes=[cause],
+    )
+    streams = RecordingStreams(make_message())
+    completer = RecordingCompleter()
+    processing = asyncio.create_task(
+        make_runtime(
+            streams,
+            store,
+            transcriber,
+            completer=completer,
+            sleep=controlled_sleep,
+        ).process_next()
+    )
+
+    await transcriber.started.wait()
+    await controlled_sleep.started.wait()
+    transcriber.release.set()
+
+    with pytest.raises(WorkerHeartbeatError) as raised:
+        await processing
+
+    assert raised.value.job_uuid == JOB_UUID
+    assert raised.value.worker_id == WORKER_ID
+    assert raised.value.expected_attempt_count == 2
+    assert raised.value.__cause__ is cause
+    assert controlled_sleep.cancelled.is_set()
+    assert store.renew_calls == [
+        (JOB_UUID, WORKER_ID, NOW + LEASE_DURATION, 2),
+    ]
+    assert completer.calls == []
+    assert streams.ack_calls == []
+
+
+async def test_lost_lease_cancels_inference_and_prevents_completion_and_ack() -> None:
+    controlled_sleep = ControlledSleep()
+    transcriber = BlockingTranscriber()
+    store = RecordingJobStore(
+        make_claimed_job(),
+        renew_outcomes=[False],
+    )
+    streams = RecordingStreams(make_message())
+    completer = RecordingCompleter()
+    runtime = make_runtime(
+        streams,
+        store,
+        transcriber,
+        completer=completer,
+        sleep=controlled_sleep,
+    )
+
+    processing = asyncio.create_task(runtime.process_next())
+    await transcriber.started.wait()
+    await controlled_sleep.started.wait()
+    controlled_sleep.tick()
+
+    with pytest.raises(WorkerLeaseLostError) as raised:
+        await processing
+
+    assert raised.value.job_uuid == JOB_UUID
+    assert raised.value.worker_id == WORKER_ID
+    assert raised.value.expected_attempt_count == 2
+    assert transcriber.cancelled.is_set()
+    assert store.renew_calls == [
+        (JOB_UUID, WORKER_ID, NOW + LEASE_DURATION, 2),
+    ]
+    assert completer.calls == []
+    assert streams.ack_calls == []
+
+
+async def test_heartbeat_store_error_cancels_inference_and_preserves_cause() -> None:
+    cause = RuntimeError("database unavailable")
+    controlled_sleep = ControlledSleep()
+    transcriber = BlockingTranscriber()
+    store = RecordingJobStore(
+        make_claimed_job(),
+        renew_outcomes=[cause],
+    )
+    streams = RecordingStreams(make_message())
+
+    processing = asyncio.create_task(
+        make_runtime(
+            streams,
+            store,
+            transcriber,
+            sleep=controlled_sleep,
+        ).process_next()
+    )
+    await transcriber.started.wait()
+    await controlled_sleep.started.wait()
+    controlled_sleep.tick()
+
+    with pytest.raises(WorkerHeartbeatError) as raised:
+        await processing
+
+    assert raised.value.job_uuid == JOB_UUID
+    assert raised.value.worker_id == WORKER_ID
+    assert raised.value.expected_attempt_count == 2
+    assert raised.value.__cause__ is cause
+    assert transcriber.cancelled.is_set()
+    assert streams.ack_calls == []
+
+
+async def test_heartbeat_failure_does_not_mask_simultaneous_transcriber_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transcription_cause = RuntimeError("model failed")
+    heartbeat_cause = RuntimeError("database unavailable")
+    store = RecordingJobStore(
+        make_claimed_job(),
+        renew_outcomes=[heartbeat_cause],
+    )
+    streams = RecordingStreams(make_message())
+    completer = RecordingCompleter()
+
+    async def no_delay(_seconds: float) -> None:
+        return None
+
+    async def wait_for_both_tasks(
+        tasks,
+        *,
+        return_when,
+    ):
+        del return_when
+        await asyncio.gather(*tasks, return_exceptions=True)
+        return set(tasks), set()
+
+    monkeypatch.setattr(runtime_module.asyncio, "wait", wait_for_both_tasks)
+
+    with pytest.raises(TranscriptionExecutionError) as raised:
+        await make_runtime(
+            streams,
+            store,
+            FakeTranscriber(error=transcription_cause),
+            completer=completer,
+            sleep=no_delay,
+        ).process_next()
+
+    assert raised.value.__cause__ is transcription_cause
+    assert len(store.renew_calls) == 1
+    assert completer.calls == []
+    assert streams.ack_calls == []
+
+
 async def test_lease_expiry_is_normalized_to_utc() -> None:
     local_clock = datetime(
         2026,
@@ -515,6 +958,9 @@ async def test_naive_clock_is_rejected_without_claim_or_ack() -> None:
         ("group_name", "   "),
         ("worker_id", ""),
         ("lease_duration", timedelta(0)),
+        ("heartbeat_interval", timedelta(0)),
+        ("heartbeat_interval", LEASE_DURATION),
+        ("heartbeat_interval", "60"),
     ],
 )
 async def test_runtime_rejects_invalid_identity_or_lease(
@@ -530,6 +976,7 @@ async def test_runtime_rejects_invalid_identity_or_lease(
         "group_name": GROUP_NAME,
         "worker_id": WORKER_ID,
         "lease_duration": LEASE_DURATION,
+        "heartbeat_interval": timedelta(minutes=1),
     }
     arguments[parameter] = value
 

@@ -150,16 +150,28 @@ class JobRepository:
         job_uuid: UUID,
         worker_id: str,
         lease_expires_at: datetime,
+        expected_attempt_count: int,
     ) -> bool:
-        """Prolonge le lease uniquement pour le worker qui possède le job."""
+        """Prolonge uniquement la tentative au lease encore valide.
+
+        Un worker retardé ne peut pas ressusciter un lease expiré. Une horloge
+        locale en recul ne raccourcit pas non plus l'échéance déjà persistée.
+        """
         statement = (
             update(TranscriptionJob)
             .where(
                 TranscriptionJob.job_uuid == job_uuid,
                 TranscriptionJob.status == JobStatus.PROCESSING,
                 TranscriptionJob.lease_owner == worker_id,
+                TranscriptionJob.attempt_count == expected_attempt_count,
+                TranscriptionJob.lease_expires_at > func.now(),
             )
-            .values(lease_expires_at=lease_expires_at)
+            .values(
+                lease_expires_at=func.greatest(
+                    TranscriptionJob.lease_expires_at,
+                    lease_expires_at,
+                )
+            )
         )
         result = await self._session.execute(statement)
         return result.rowcount == 1

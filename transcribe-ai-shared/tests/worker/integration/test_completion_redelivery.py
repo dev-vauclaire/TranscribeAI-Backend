@@ -33,8 +33,21 @@ GROUP_NAME = "transcription-workers"
 FIRST_WORKER_ID = "worker-fast-1"
 RECOVERY_WORKER_ID = "worker-fast-recovery-1"
 JOB_UUID = UUID("12345678-1234-5678-1234-567812345678")
-NOW = datetime(2026, 8, 21, 12, tzinfo=UTC)
+NOW = datetime(2099, 1, 1, 12, tzinfo=UTC)
+CLOCK_STEP = timedelta(seconds=1)
 LEASE_DURATION = timedelta(minutes=5)
+
+
+class AdvancingClock:
+    """Fournit un lease croissant au claim puis au renouvellement final."""
+
+    def __init__(self) -> None:
+        self._current = NOW
+
+    def __call__(self) -> datetime:
+        current = self._current
+        self._current += CLOCK_STEP
+        return current
 
 
 class SimulatedWorkerCrash(RuntimeError):
@@ -97,7 +110,7 @@ def make_runtime(
         group_name=GROUP_NAME,
         worker_id=worker_id,
         lease_duration=LEASE_DURATION,
-        clock=lambda: NOW,
+        clock=AdvancingClock(),
     )
 
 

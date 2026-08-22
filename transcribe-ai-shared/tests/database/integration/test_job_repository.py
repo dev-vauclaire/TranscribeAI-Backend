@@ -22,6 +22,7 @@ from transcribe_ai_shared import (
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 NOW = datetime(2026, 8, 18, 12, tzinfo=timezone.utc)
+ACTIVE_LEASE_EXPIRATION = datetime(2099, 1, 1, 12, tzinfo=timezone.utc)
 
 
 @contextmanager
@@ -555,13 +556,14 @@ async def test_claim_preserves_the_first_start_time(async_session_factory) -> No
 async def test_renew_lease_updates_the_owners_expiration(
     async_session_factory,
 ) -> None:
-    previous_expiration = NOW + timedelta(minutes=1)
-    renewed_expiration = NOW + timedelta(minutes=10)
+    previous_expiration = ACTIVE_LEASE_EXPIRATION
+    renewed_expiration = ACTIVE_LEASE_EXPIRATION + timedelta(minutes=10)
     job_uuid = await persist_job(
         async_session_factory,
         status=JobStatus.PROCESSING,
         lease_owner="worker-fast-1",
         lease_expires_at=previous_expiration,
+        attempt_count=3,
     )
 
     async with async_session_factory.begin() as session:
@@ -569,48 +571,179 @@ async def test_renew_lease_updates_the_owners_expiration(
             job_uuid,
             "worker-fast-1",
             renewed_expiration,
+            3,
         )
 
     saved = await read_job(async_session_factory, job_uuid)
     assert renewed is True
     assert saved is not None
+    assert saved.lease_expires_at > previous_expiration
     assert saved.lease_expires_at == renewed_expiration
 
 
 @pytest.mark.parametrize(
-    ("status", "actual_owner", "requesting_owner"),
+    "status",
     [
-        (JobStatus.QUEUED, "worker-fast-1", "worker-fast-1"),
-        (JobStatus.COMPLETED, "worker-fast-1", "worker-fast-1"),
-        (JobStatus.FAILED, "worker-fast-1", "worker-fast-1"),
-        (JobStatus.PROCESSING, "worker-fast-1", "worker-fast-2"),
+        JobStatus.QUEUED,
+        JobStatus.COMPLETED,
+        JobStatus.FAILED,
     ],
 )
-async def test_renew_lease_refuses_an_invalid_status_or_owner(
+async def test_renew_lease_refuses_a_non_processing_job(
     async_session_factory,
     status: JobStatus,
-    actual_owner: str,
-    requesting_owner: str,
 ) -> None:
-    previous_expiration = NOW + timedelta(minutes=1)
+    previous_expiration = ACTIVE_LEASE_EXPIRATION
     job_uuid = await persist_job(
         async_session_factory,
         status=status,
-        lease_owner=actual_owner,
+        lease_owner="worker-fast-1",
         lease_expires_at=previous_expiration,
+        attempt_count=3,
     )
 
     async with async_session_factory.begin() as session:
         renewed = await JobRepository(session).renew_lease(
             job_uuid,
-            requesting_owner,
-            NOW + timedelta(minutes=10),
+            "worker-fast-1",
+            ACTIVE_LEASE_EXPIRATION + timedelta(minutes=10),
+            3,
         )
 
     saved = await read_job(async_session_factory, job_uuid)
     assert renewed is False
     assert saved is not None
-    assert saved.lease_owner == actual_owner
+    assert saved.lease_owner == "worker-fast-1"
+    assert saved.lease_expires_at == previous_expiration
+
+
+async def test_renew_lease_refuses_another_worker(async_session_factory) -> None:
+    previous_expiration = ACTIVE_LEASE_EXPIRATION
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        lease_owner="worker-fast-1",
+        lease_expires_at=previous_expiration,
+        attempt_count=3,
+    )
+
+    async with async_session_factory.begin() as session:
+        renewed = await JobRepository(session).renew_lease(
+            job_uuid,
+            "worker-fast-2",
+            ACTIVE_LEASE_EXPIRATION + timedelta(minutes=10),
+            3,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert renewed is False
+    assert saved is not None
+    assert saved.lease_owner == "worker-fast-1"
+    assert saved.lease_expires_at == previous_expiration
+
+
+async def test_renew_lease_refuses_a_stale_attempt(async_session_factory) -> None:
+    previous_expiration = ACTIVE_LEASE_EXPIRATION
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        lease_owner="worker-fast-1",
+        lease_expires_at=previous_expiration,
+        attempt_count=3,
+    )
+
+    async with async_session_factory.begin() as session:
+        renewed = await JobRepository(session).renew_lease(
+            job_uuid,
+            "worker-fast-1",
+            ACTIVE_LEASE_EXPIRATION + timedelta(minutes=10),
+            2,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert renewed is False
+    assert saved is not None
+    assert saved.attempt_count == 3
+    assert saved.lease_expires_at == previous_expiration
+
+
+async def test_renew_lease_does_not_commit_the_callers_transaction(
+    async_session_factory,
+) -> None:
+    previous_expiration = ACTIVE_LEASE_EXPIRATION
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        lease_owner="worker-fast-1",
+        lease_expires_at=previous_expiration,
+        attempt_count=3,
+    )
+
+    with pytest.raises(RuntimeError, match="rollback requested"):
+        async with async_transaction(async_session_factory) as session:
+            renewed = await JobRepository(session).renew_lease(
+                job_uuid,
+                "worker-fast-1",
+                ACTIVE_LEASE_EXPIRATION + timedelta(minutes=10),
+                3,
+            )
+            assert renewed is True
+            raise RuntimeError("rollback requested")
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert saved is not None
+    assert saved.lease_expires_at == previous_expiration
+
+
+async def test_renew_lease_refuses_an_expired_lease(
+    async_session_factory,
+) -> None:
+    previous_expiration = NOW
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        lease_owner="worker-fast-1",
+        lease_expires_at=previous_expiration,
+        attempt_count=3,
+    )
+
+    async with async_session_factory.begin() as session:
+        renewed = await JobRepository(session).renew_lease(
+            job_uuid,
+            "worker-fast-1",
+            ACTIVE_LEASE_EXPIRATION,
+            3,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert renewed is False
+    assert saved is not None
+    assert saved.lease_expires_at == previous_expiration
+
+
+async def test_renew_lease_preserves_a_later_expiration(
+    async_session_factory,
+) -> None:
+    previous_expiration = ACTIVE_LEASE_EXPIRATION + timedelta(minutes=10)
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        lease_owner="worker-fast-1",
+        lease_expires_at=previous_expiration,
+        attempt_count=3,
+    )
+
+    async with async_session_factory.begin() as session:
+        renewed = await JobRepository(session).renew_lease(
+            job_uuid,
+            "worker-fast-1",
+            ACTIVE_LEASE_EXPIRATION,
+            3,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert renewed is True
+    assert saved is not None
     assert saved.lease_expires_at == previous_expiration
 
 
@@ -740,6 +873,7 @@ async def test_mutations_refuse_an_unknown_job(async_session_factory) -> None:
             unknown_uuid,
             "worker-fast-1",
             NOW + timedelta(minutes=10),
+            0,
         )
         requeued = await repository.requeue_expired_job(unknown_uuid)
         failed = await repository.mark_failed(

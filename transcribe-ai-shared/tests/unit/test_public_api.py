@@ -44,9 +44,11 @@ from transcribe_ai_shared import (
     TranscriptionStreams,
     WorkerClaimRejected,
     WorkerCompleted,
+    WorkerHeartbeatError,
     WorkerIdle,
     WorkerJobStore,
     WorkerJobTypeMismatchError,
+    WorkerLeaseLostError,
     WorkerProcessResult,
     WorkerRuntime,
     WorkerSettings,
@@ -109,9 +111,11 @@ def test_supported_public_imports_are_available():
     assert TranscriptionStreams is not None
     assert WorkerClaimRejected is not None
     assert WorkerCompleted is not None
+    assert WorkerHeartbeatError is not None
     assert WorkerIdle is not None
     assert WorkerJobStore is not None
     assert WorkerJobTypeMismatchError is not None
+    assert WorkerLeaseLostError is not None
     assert WorkerProcessResult is not None
     assert WorkerRuntime is not None
     assert WorkerSettings is not None

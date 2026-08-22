@@ -37,6 +37,39 @@ class WorkerJobTypeMismatchError(RuntimeError):
         )
 
 
+class WorkerHeartbeatError(RuntimeError):
+    """Encapsule une panne technique pendant le renouvellement du lease."""
+
+    def __init__(
+        self,
+        job_uuid: UUID,
+        worker_id: str,
+        expected_attempt_count: int,
+    ) -> None:
+        self.job_uuid = job_uuid
+        self.worker_id = worker_id
+        self.expected_attempt_count = expected_attempt_count
+        super().__init__(f"Le heartbeat du job {job_uuid} a échoué.")
+
+
+class WorkerLeaseLostError(RuntimeError):
+    """Signale que le worker ne possède plus la tentative en cours."""
+
+    def __init__(
+        self,
+        job_uuid: UUID,
+        worker_id: str,
+        expected_attempt_count: int,
+    ) -> None:
+        self.job_uuid = job_uuid
+        self.worker_id = worker_id
+        self.expected_attempt_count = expected_attempt_count
+        super().__init__(
+            f"Le worker {worker_id} a perdu le lease du job {job_uuid} "
+            f"pour la tentative {expected_attempt_count}."
+        )
+
+
 class TranscriptionCompletionError(RuntimeError):
     """Signale une panne SQLAlchemy pendant la finalisation atomique d'un job."""
 
