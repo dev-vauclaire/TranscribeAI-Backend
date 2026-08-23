@@ -2,7 +2,6 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
-from faster_whisper import WhisperModel
 import pytest
 
 from transcribe_ai_shared import FileSystemAudioStorage, TranscriptionOutput
@@ -17,6 +16,8 @@ pytestmark = [
         reason="Les tests ML nécessitent RUN_GPU_TESTS=1",
     ),
 ]
+
+WhisperModel = pytest.importorskip("faster_whisper").WhisperModel
 
 
 async def test_faster_whisper_transcribes_a_real_french_audio_on_gpu(

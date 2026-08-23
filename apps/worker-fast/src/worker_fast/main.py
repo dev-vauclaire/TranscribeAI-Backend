@@ -1,8 +1,7 @@
 import asyncio
+from importlib import import_module
 import logging
 from typing import NoReturn
-
-from faster_whisper import WhisperModel
 
 from worker_fast.application import run
 from worker_fast.config import WorkerFastSettings
@@ -30,7 +29,15 @@ def _create_transcriber(
 ) -> Transcriber:
     """Construit une seule instance du moteur configuré pour tout le processus."""
     if settings.worker_transcriber_backend == "faster-whisper":
-        model = WhisperModel(
+        try:
+            faster_whisper = import_module("faster_whisper")
+        except ImportError as error:
+            raise RuntimeError(
+                "La dépendance Faster-Whisper est absente ; installez l'extra "
+                "'cpu' ou 'gpu' du worker"
+            ) from error
+
+        model = faster_whisper.WhisperModel(
             settings.worker_transcriber_model,
             device=settings.worker_transcriber_device,
             compute_type=settings.worker_transcriber_compute_type,

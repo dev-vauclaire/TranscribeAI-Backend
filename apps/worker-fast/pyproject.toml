@@ -8,13 +8,16 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "faster-whisper>=1.2.1,<2",
     "pydantic>=2.13.4,<3",
     "transcribe-ai-shared",
 ]
 
 [project.optional-dependencies]
+cpu = [
+    "faster-whisper>=1.2.1,<2",
+]
 gpu = [
+    "faster-whisper>=1.2.1,<2",
     "nvidia-cublas-cu12>=12,<13; sys_platform == 'linux'",
     "nvidia-cudnn-cu12>=9,<10; sys_platform == 'linux'",
 ]

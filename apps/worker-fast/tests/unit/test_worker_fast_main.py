@@ -1,4 +1,5 @@
 import logging
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -27,7 +28,11 @@ def test_create_transcriber_builds_the_configured_faster_whisper_model(
     model = Mock()
     model_factory = Mock(return_value=model)
     storage = Mock()
-    monkeypatch.setattr(main_module, "WhisperModel", model_factory)
+    monkeypatch.setattr(
+        main_module,
+        "import_module",
+        Mock(return_value=SimpleNamespace(WhisperModel=model_factory)),
+    )
 
     transcriber = main_module._create_transcriber(
         WorkerFastSettings(
@@ -45,6 +50,22 @@ def test_create_transcriber_builds_the_configured_faster_whisper_model(
         device="cpu",
         compute_type="int8",
     )
+
+
+def test_create_transcriber_reports_missing_faster_whisper_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing_dependency(module_name: str) -> None:
+        assert module_name == "faster_whisper"
+        raise ImportError(module_name)
+
+    monkeypatch.setattr(main_module, "import_module", missing_dependency)
+
+    with pytest.raises(RuntimeError, match="extra 'cpu' ou 'gpu'"):
+        main_module._create_transcriber(
+            WorkerFastSettings(worker_id="fast-1"),
+            Mock(),
+        )
 
 
 def test_create_transcriber_allows_fake_only_with_development_opt_in() -> None:
