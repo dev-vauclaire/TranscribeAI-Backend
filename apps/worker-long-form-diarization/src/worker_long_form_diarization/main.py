@@ -5,8 +5,11 @@ from typing import NoReturn
 from worker_long_form_diarization.application import run
 from worker_long_form_diarization.config import WorkerLongFormDiarizationSettings
 from transcribe_ai_shared import (
+    AudioStorage,
     DatabaseSettings,
+    FileSystemAudioStorage,
     RedisSettings,
+    StorageSettings,
     Transcriber,
     WorkerIdle,
     WorkerProcessResult,
@@ -16,12 +19,18 @@ from transcribe_ai_shared import (
 LOGGER = logging.getLogger(__name__)
 
 
-def _create_transcriber(settings: WorkerLongFormDiarizationSettings) -> Transcriber:
-    """Construit uniquement le fake explicitement autorisé pour le développement."""
-    if settings.worker_transcriber_backend != "fake":
-        raise RuntimeError(
-            "Aucun backend de transcription LONG_FORM_DIARIZATION n'est configuré"
+def _create_transcriber(
+    settings: WorkerLongFormDiarizationSettings,
+    storage: AudioStorage,
+) -> Transcriber:
+    """Construit une seule instance du moteur configuré pour tout le processus."""
+    if settings.worker_transcriber_backend == "whisperx":
+        from worker_long_form_diarization.transcribers.whisperx_factory import (
+            create_whisperx_transcriber,
         )
+
+        return create_whisperx_transcriber(settings=settings, storage=storage)
+
     if settings.worker_environment != "development":
         raise RuntimeError("Le backend fake est réservé au développement")
 
@@ -42,11 +51,13 @@ def _log_result(result: WorkerProcessResult) -> None:
 
 async def _run_from_environment() -> NoReturn:
     settings = WorkerLongFormDiarizationSettings()
+    storage_settings = StorageSettings()
+    storage = FileSystemAudioStorage(storage_settings.audio_storage_path)
     await run(
         database_settings=DatabaseSettings(),
         redis_settings=RedisSettings(),
         worker_settings=settings,
-        transcriber=_create_transcriber(settings),
+        transcriber=_create_transcriber(settings, storage),
         on_result=_log_result,
     )
 

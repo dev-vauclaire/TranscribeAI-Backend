@@ -29,7 +29,9 @@ async def test_run_delegates_to_runtime_with_long_form_diarization_type(
     )
     redis_settings = RedisSettings(redis_url="redis://localhost:6379/0")
     worker_settings = WorkerLongFormDiarizationSettings(
-        worker_id="long-form-diarization-1"
+        worker_id="long-form-diarization-1",
+        worker_environment="development",
+        worker_transcriber_backend="fake",
     )
 
     with pytest.raises(StopWorker):

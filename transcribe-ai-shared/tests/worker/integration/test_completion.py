@@ -90,7 +90,7 @@ async def test_complete_persists_jsonb_and_marks_job_completed_after_commit(
     await service.complete(
         job=make_claimed_job(),
         worker_id=WORKER_ID,
-        output=TranscriptionOutput(result=payload),
+        output=TranscriptionOutput(result=payload, speaker_count=1),
     )
 
     saved_job, saved_result = await load_persisted_state(async_session_factory)
@@ -100,7 +100,25 @@ async def test_complete_persists_jsonb_and_marks_job_completed_after_commit(
     assert saved_result is not None
     assert saved_result.job_uuid == JOB_UUID
     assert saved_result.result == payload
+    assert saved_result.speaker_count == 1
     assert saved_result.created_at.tzinfo is not None
+
+
+async def test_complete_keeps_speaker_count_null_when_not_supplied(
+    async_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await persist_processing_job(async_session_factory)
+    service = TranscriptionCompletionService(async_session_factory)
+
+    await service.complete(
+        job=make_claimed_job(),
+        worker_id=WORKER_ID,
+        output=TranscriptionOutput(result={"text": "sans diarization"}),
+    )
+
+    _, saved_result = await load_persisted_state(async_session_factory)
+    assert saved_result is not None
+    assert saved_result.speaker_count is None
 
 
 async def test_complete_rolls_back_when_result_cannot_be_serialized(

@@ -12,8 +12,56 @@ dependencies = [
     "transcribe-ai-shared",
 ]
 
+[project.optional-dependencies]
+cpu = [
+    "huggingface-hub>=0.28.1,<1",
+    "pyannote-audio==4.0.4",
+    "torch>=2.8,<2.9",
+    "torchaudio>=2.8,<2.9",
+    "torchvision>=0.23,<0.24",
+    "whisperx==3.8.6",
+]
+gpu = [
+    "huggingface-hub>=0.28.1,<1",
+    "pyannote-audio==4.0.4",
+    "torch>=2.8,<2.9",
+    "torchaudio>=2.8,<2.9",
+    "torchvision>=0.23,<0.24",
+    "whisperx==3.8.6",
+]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "gpu" },
+    ],
+]
+
 [tool.uv.sources]
 transcribe-ai-shared = { workspace = true }
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu128", extra = "gpu" },
+]
+torchaudio = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu128", extra = "gpu" },
+]
+torchvision = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu128", extra = "gpu" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [project.scripts]
 worker-long-form-diarization = "worker_long_form_diarization.main:main"

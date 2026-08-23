@@ -159,7 +159,8 @@ async def test_complete_adds_result_then_marks_job_and_commits_same_session(
         result={
             "text": "bonjour",
             "segments": [{"start": 0.0, "end": 1.0}],
-        }
+        },
+        speaker_count=2,
     )
 
     await service.complete(
@@ -181,6 +182,7 @@ async def test_complete_adds_result_then_marks_job_and_commits_same_session(
     saved_result = result_repository.add_calls[0]
     assert saved_result.job_uuid == JOB_UUID
     assert saved_result.result == output.result
+    assert saved_result.speaker_count == output.speaker_count
     assert job_repository.mark_calls == [
         (JOB_UUID, WORKER_ID, ATTEMPT_COUNT),
     ]

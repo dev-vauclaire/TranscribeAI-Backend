@@ -17,6 +17,13 @@ class TranscriptionOutput:
     """Sortie métier indépendante d'un moteur de transcription particulier."""
 
     result: dict[str, JsonValue]
+    speaker_count: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.speaker_count is not None and (
+            type(self.speaker_count) is not int or self.speaker_count < 0
+        ):
+            raise ValueError("speaker_count doit être un entier positif ou nul")
 
 
 @dataclass(frozen=True, slots=True)

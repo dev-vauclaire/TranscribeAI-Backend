@@ -72,6 +72,7 @@ class TranscriptionCompletionService:
                     TranscriptionResult(
                         job_uuid=job.job_uuid,
                         result=output.result,
+                        speaker_count=output.speaker_count,
                     )
                 )
                 completed = await job_repository.mark_completed(

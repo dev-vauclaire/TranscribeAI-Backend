@@ -26,6 +26,7 @@ async def test_fake_transcriber_has_a_deterministic_development_output() -> None
     result = await FakeTranscriber().transcribe(LOCATION)
 
     assert result == TranscriptionOutput(result={"text": "fake transcription"})
+    assert result.speaker_count is None
 
 
 async def test_fake_transcriber_can_simulate_a_failure() -> None:
