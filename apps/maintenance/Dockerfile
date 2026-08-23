@@ -15,18 +15,22 @@ RUN uv sync --locked --no-dev --package maintenance --no-editable
 FROM python:3.12-slim-trixie AS runtime
 
 ENV PATH="/opt/maintenance/.venv/bin:$PATH" \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    AUDIO_STORAGE_PATH=/data/transcriptions
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends 'libpq5=17.*' \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system maintenance \
-    && useradd --system --gid maintenance --no-create-home maintenance
+    && groupadd --gid 10001 maintenance \
+    && useradd --uid 10001 --gid maintenance --no-create-home \
+        --shell /usr/sbin/nologin maintenance \
+    && mkdir --parents /data/transcriptions \
+    && chown maintenance:maintenance /data/transcriptions
 
 WORKDIR /opt/maintenance
 
 COPY --from=builder /opt/maintenance/.venv /opt/maintenance/.venv
 
-USER maintenance
+USER 10001:10001
 
 ENTRYPOINT ["/opt/maintenance/.venv/bin/cleanup-storage"]

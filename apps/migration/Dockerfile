@@ -20,13 +20,14 @@ ENV PATH="/opt/migration/.venv/bin:$PATH" \
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends 'libpq5=17.*' \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system migration \
-    && useradd --system --gid migration --no-create-home migration
+    && groupadd --gid 10001 migration \
+    && useradd --uid 10001 --gid migration --no-create-home \
+        --shell /usr/sbin/nologin migration
 
 WORKDIR /opt/migration
 
 COPY --from=builder /opt/migration/.venv /opt/migration/.venv
 
-USER migration
+USER 10001:10001
 
 ENTRYPOINT ["/opt/migration/.venv/bin/database-migrate"]

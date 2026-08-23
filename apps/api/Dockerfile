@@ -31,8 +31,9 @@ RUN apt-get update \
         'ffmpeg=7:7.*' \
         'libpq5=17.*' \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system api \
-    && useradd --system --gid api --no-create-home api \
+    && groupadd --gid 10001 api \
+    && useradd --uid 10001 --gid api --no-create-home \
+        --shell /usr/sbin/nologin api \
     && mkdir --parents /data/transcriptions \
     && chown api:api /data/transcriptions
 
@@ -40,10 +41,11 @@ WORKDIR /opt/api
 
 COPY --from=builder /opt/api/.venv /opt/api/.venv
 
-# The named user is created above and keeps the runtime intent explicit.
-# hadolint ignore=DL3066
-USER api
+USER 10001:10001
 
 EXPOSE 8000
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2).read()"]
 
 ENTRYPOINT ["/opt/api/.venv/bin/api"]

@@ -1,16 +1,176 @@
+x-database-environment: &database-environment
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+
+x-redis-environment: &redis-environment
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+
+x-worker-environment: &worker-environment
+  <<: [*database-environment, *redis-environment]
+  AUDIO_STORAGE_PATH: /data/transcriptions
+  MAX_ATTEMPTS: ${MAX_ATTEMPTS:-3}
+  WORKER_AUTOCLAIM_INTERVAL_SECONDS: ${WORKER_AUTOCLAIM_INTERVAL_SECONDS:-60}
+  WORKER_AUTOCLAIM_MIN_IDLE_MILLISECONDS: ${WORKER_AUTOCLAIM_MIN_IDLE_MILLISECONDS:-300000}
+  WORKER_BLOCK_MILLISECONDS: ${WORKER_BLOCK_MILLISECONDS:-5000}
+  WORKER_CONSUMER_GROUP: ${WORKER_CONSUMER_GROUP:-transcription-workers}
+  WORKER_HEARTBEAT_SECONDS: ${WORKER_HEARTBEAT_SECONDS:-60}
+  WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-300}
+
 services:
   postgres:
-    image: postgres:16
-    container_name: postgres_test
+    image: postgres:16-alpine
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=postgres
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${POSTGRES_PUBLISHED_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready --username "$${POSTGRES_USER}"
+          --dbname "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
 
   redis:
-    image: redis:8.10.1
-    container_name: redis_test
+    image: redis:8.10.1-alpine
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
     ports:
-      - "6379:6379"
+      - "127.0.0.1:${REDIS_PUBLISHED_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  migration:
+    build:
+      context: .
+      dockerfile: apps/migration/Dockerfile
+    environment:
+      <<: *database-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      <<: *database-environment
+      API_FAST_MAX_DURATION_SECONDS: ${API_FAST_MAX_DURATION_SECONDS:-900}
+      API_HOST: 0.0.0.0
+      API_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS: ${API_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS:-14400}
+      API_MAX_UPLOAD_SIZE_BYTES: ${API_MAX_UPLOAD_SIZE_BYTES:-104857600}
+      API_PORT: 8000
+      API_READINESS_TIMEOUT_SECONDS: ${API_READINESS_TIMEOUT_SECONDS:-2}
+      AUDIO_STORAGE_PATH: /data/transcriptions
+      FFPROBE_PATH: ffprobe
+      FFPROBE_TIMEOUT_SECONDS: ${FFPROBE_TIMEOUT_SECONDS:-30}
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${API_PUBLISHED_PORT:-8000}:8000"
+    volumes:
+      - audio-data:/data/transcriptions
+    init: true
+    restart: unless-stopped
+
+  dispatcher:
+    profiles: [operations]
+    build:
+      context: .
+      dockerfile: apps/dispatcher/Dockerfile
+    environment:
+      <<: [*database-environment, *redis-environment]
+      DISPATCHER_BATCH_SIZE: ${DISPATCHER_BATCH_SIZE:-100}
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-3}
+      RECONCILIATION_TIMEOUT_SECONDS: ${RECONCILIATION_TIMEOUT_SECONDS:-300}
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: "no"
+
+  worker-fast:
+    build:
+      context: .
+      dockerfile: apps/worker-fast/Dockerfile
+      target: runtime-fake
+    environment:
+      <<: *worker-environment
+      WORKER_ENVIRONMENT: development
+      WORKER_ID: ${WORKER_FAST_ID:-worker-fast-compose}
+      WORKER_TRANSCRIBER_BACKEND: fake
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - audio-data:/data/transcriptions:ro
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  worker-long-form-diarization:
+    build:
+      context: .
+      dockerfile: apps/worker-long-form-diarization/Dockerfile
+      target: runtime-fake
+    environment:
+      <<: *worker-environment
+      WORKER_ENVIRONMENT: development
+      WORKER_ID: ${WORKER_LONG_FORM_DIARIZATION_ID:-worker-long-form-diarization-compose}
+      WORKER_TRANSCRIBER_BACKEND: fake
+      WORKER_TRANSCRIBER_MODEL_DIRECTORY: /home/worker-long-form-diarization/models
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - audio-data:/data/transcriptions:ro
+    init: true
+    stop_grace_period: 2m
+    restart: unless-stopped
+
+  maintenance:
+    profiles: [maintenance]
+    build:
+      context: .
+      dockerfile: apps/maintenance/Dockerfile
+    environment:
+      <<: *database-environment
+      AUDIO_STORAGE_PATH: /data/transcriptions
+      MAINTENANCE_CLEANUP_GRACE_PERIOD_SECONDS: ${MAINTENANCE_CLEANUP_GRACE_PERIOD_SECONDS:-3600}
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+    volumes:
+      - audio-data:/data/transcriptions
+    restart: "no"
+
+volumes:
+  audio-data:
+  postgres-data:
+  redis-data:

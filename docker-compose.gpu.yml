@@ -1,0 +1,45 @@
+services:
+  worker-fast:
+    build:
+      target: runtime-gpu
+    environment:
+      WORKER_ENVIRONMENT: production
+      WORKER_TRANSCRIBER_BACKEND: faster-whisper
+      WORKER_TRANSCRIBER_COMPUTE_TYPE: ${WORKER_FAST_COMPUTE_TYPE:-float16}
+      WORKER_TRANSCRIBER_DEVICE: cuda
+      WORKER_TRANSCRIBER_MODEL: ${WORKER_FAST_MODEL:-large-v3-turbo}
+    volumes:
+      - worker-fast-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${WORKER_FAST_GPU_DEVICE_ID:-0}"]
+              capabilities: [gpu]
+
+  worker-long-form-diarization:
+    build:
+      target: runtime-gpu
+    environment:
+      WORKER_ENVIRONMENT: production
+      WORKER_TRANSCRIBER_BACKEND: whisperx
+      WORKER_TRANSCRIBER_BATCH_SIZE: ${WORKER_LONG_FORM_DIARIZATION_BATCH_SIZE:-16}
+      WORKER_TRANSCRIBER_COMPUTE_TYPE: ${WORKER_LONG_FORM_DIARIZATION_COMPUTE_TYPE:-default}
+      WORKER_TRANSCRIBER_DEVICE: cuda
+      WORKER_TRANSCRIBER_HUGGING_FACE_TOKEN: ${WORKER_TRANSCRIBER_HUGGING_FACE_TOKEN:?WORKER_TRANSCRIBER_HUGGING_FACE_TOKEN must be set}
+      WORKER_TRANSCRIBER_MODEL: ${WORKER_LONG_FORM_DIARIZATION_MODEL:-large-v3-turbo}
+      WORKER_TRANSCRIBER_MODEL_DIRECTORY: /models
+    volumes:
+      - worker-long-form-diarization-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${WORKER_LONG_FORM_DIARIZATION_GPU_DEVICE_ID:-0}"]
+              capabilities: [gpu]
+
+volumes:
+  worker-fast-models:
+  worker-long-form-diarization-models:
