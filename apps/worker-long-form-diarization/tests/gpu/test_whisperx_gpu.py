@@ -24,28 +24,19 @@ pytestmark = [
 
 async def test_whisperx_transcribes_and_diarizes_a_real_french_audio_on_gpu(
     tmp_path: Path,
+    french_dialogue_audio_path: Path,
 ) -> None:
-    configured_audio_path = os.getenv("WORKER_LONG_FORM_GPU_TEST_AUDIO_PATH")
-    if configured_audio_path is None:
-        pytest.fail(
-            "WORKER_LONG_FORM_GPU_TEST_AUDIO_PATH doit cibler un audio "
-            "français multi-locuteurs"
-        )
-    audio_path = Path(configured_audio_path)
-    if not audio_path.is_file() or not audio_path.suffix:
-        pytest.fail("Le fichier audio GPU configuré est introuvable ou sans extension")
-
     hugging_face_token = os.getenv("WORKER_TRANSCRIBER_HUGGING_FACE_TOKEN")
     if hugging_face_token is None:
         pytest.fail("WORKER_TRANSCRIBER_HUGGING_FACE_TOKEN est requis")
 
     model_directory = Path(os.getenv("WORKER_TRANSCRIBER_MODEL_DIRECTORY", "/models"))
     storage = FileSystemAudioStorage(tmp_path / "transcriptions")
-    with audio_path.open("rb") as audio:
+    with french_dialogue_audio_path.open("rb") as audio:
         location = storage.save(
             uuid4(),
             audio,
-            extension=audio_path.suffix.removeprefix(".").lower(),
+            extension=french_dialogue_audio_path.suffix.removeprefix(".").lower(),
         )
 
     settings = WorkerLongFormDiarizationSettings(
@@ -67,6 +58,20 @@ async def test_whisperx_transcribes_and_diarizes_a_real_french_audio_on_gpu(
 
     segments = cast(list[dict[str, object]], output.result["segments"])
     assert segments
+    speakers: set[str] = set()
+    for segment in segments:
+        start = segment["start"]
+        end = segment["end"]
+        assert isinstance(start, int | float)
+        assert isinstance(end, int | float)
+        assert start < end
+        speaker = segment["speaker"]
+        assert speaker is None or isinstance(speaker, str)
+        if speaker is not None:
+            speakers.add(speaker)
+
+    assert speakers
+    assert output.speaker_count == len(speakers)
     for previous, current in zip(segments, segments[1:], strict=False):
         previous_speaker = previous["speaker"]
         assert previous_speaker is None or previous_speaker != current["speaker"]

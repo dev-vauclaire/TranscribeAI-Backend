@@ -157,14 +157,16 @@ uv run pytest -m integration transcribe-ai-shared/tests/worker/integration
 Le second scénario exerce le runtime commun avec PostgreSQL et Redis réels via
 Testcontainers, notamment face à deux messages dupliqués.
 
-Le test d'inférence réellement ML est isolé sous le marker `gpu`. Il exige une
-activation explicite, un court fichier contenant de la parole française, un
-accès initial à Hugging Face si le modèle n'est pas en cache et toute la stack
-GPU décrite ci-dessus :
+Le test d'inférence réellement ML est isolé sous le marker `gpu`. Il télécharge
+dans un répertoire temporaire pytest le dialogue français
+[A Formal Conversation](https://commons.wikimedia.org/wiki/File:French_Dialogue_-_A_Formal_Conversation.ogg).
+La fixture commune aux deux workers vérifie sa taille et son empreinte SHA-256
+avant l'inférence. Le test exige une activation explicite, un accès initial à
+Hugging Face si le modèle n'est pas en cache et toute la stack GPU décrite
+ci-dessus :
 
 ```shell
 RUN_GPU_TESTS=1 \
-WORKER_FAST_GPU_TEST_AUDIO_PATH=/chemin/audio-francais.wav \
 uv run --package worker-fast --extra gpu \
   pytest -m gpu apps/worker-fast/tests/gpu
 ```

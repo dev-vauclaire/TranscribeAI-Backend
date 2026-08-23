@@ -205,13 +205,18 @@ uv run pytest -m integration transcribe-ai-shared/tests/worker/integration
 
 Les tests unitaires injectent des doubles pour WhisperX et Pyannote : ils ne
 téléchargent aucun modèle et ne requièrent pas les extras ML. Le test
-d'inférence réel porte le marker `gpu`. Il exige un audio français
-multi-locuteurs, le token Hugging Face et un cache modèle persistant. Il reste
-exclu de la CI standard :
+d'inférence réel porte le marker `gpu`. Il télécharge dans le répertoire
+temporaire pytest le dialogue français
+[A Formal Conversation](https://commons.wikimedia.org/wiki/File:French_Dialogue_-_A_Formal_Conversation.ogg),
+créé par Hagindaz pour le Wikibook French et distribué sous CC BY-SA 3.0 / GFDL
+1.2+. Le téléchargement est borné à 1 Mio et protégé par une taille et une
+empreinte SHA-256 attendues avant l'inférence
+(`f700390a491a1af077d65fb29e0e7099a711324f6c1847308ba9dc74bc40ff1a`). Le
+test exige donc un accès réseau, le token Hugging Face et un cache modèle
+persistant. Il reste exclu de la CI standard :
 
 ```shell
 RUN_GPU_TESTS=1 \
-WORKER_LONG_FORM_GPU_TEST_AUDIO_PATH=/chemin/audio-francais-multilocuteurs.wav \
 WORKER_TRANSCRIBER_HUGGING_FACE_TOKEN=hf_xxx \
 WORKER_TRANSCRIBER_MODEL_DIRECTORY=/chemin/absolu/models \
 uv run --package worker-long-form-diarization --extra gpu \

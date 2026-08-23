@@ -21,22 +21,14 @@ pytestmark = [
 
 async def test_faster_whisper_transcribes_a_real_french_audio_on_gpu(
     tmp_path: Path,
+    french_dialogue_audio_path: Path,
 ) -> None:
-    configured_audio_path = os.getenv("WORKER_FAST_GPU_TEST_AUDIO_PATH")
-    if configured_audio_path is None:
-        pytest.fail(
-            "WORKER_FAST_GPU_TEST_AUDIO_PATH doit cibler un court audio français"
-        )
-    audio_path = Path(configured_audio_path)
-    if not audio_path.is_file() or not audio_path.suffix:
-        pytest.fail("Le fichier audio GPU configuré est introuvable ou sans extension")
-
     storage = FileSystemAudioStorage(tmp_path / "transcriptions")
-    with audio_path.open("rb") as audio:
+    with french_dialogue_audio_path.open("rb") as audio:
         location = storage.save(
             uuid4(),
             audio,
-            extension=audio_path.suffix.removeprefix(".").lower(),
+            extension=french_dialogue_audio_path.suffix.removeprefix(".").lower(),
         )
     transcriber = FasterWhisperTranscriber(
         model=WhisperModel(
