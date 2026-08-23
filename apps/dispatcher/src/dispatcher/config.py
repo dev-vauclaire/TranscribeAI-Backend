@@ -18,6 +18,11 @@ class DispatcherSettings(BaseSettings):
     )
 
     batch_size: int = Field(default=100, gt=0, le=1_000)
+    reconciliation_timeout_seconds: int = Field(
+        default=300,
+        gt=0,
+        validation_alias="RECONCILIATION_TIMEOUT_SECONDS",
+    )
     max_attempts: int = Field(
         default=3,
         ge=1,

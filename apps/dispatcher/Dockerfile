@@ -17,6 +17,7 @@ FROM python:3.12-slim-trixie AS runtime
 ENV PATH="/opt/dispatcher/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     DISPATCHER_BATCH_SIZE=100 \
+    RECONCILIATION_TIMEOUT_SECONDS=300 \
     MAX_ATTEMPTS=3
 
 RUN apt-get update \

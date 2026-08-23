@@ -57,6 +57,15 @@ class TranscriptionJob(Base):
             "lease_expires_at",
             postgresql_where=text("status = 'PROCESSING'"),
         ),
+        Index(
+            "idx_job_stale_dispatch",
+            "last_dispatched_at",
+            "job_uuid",
+            postgresql_where=text(
+                "status = 'QUEUED' AND dispatch_required IS FALSE "
+                "AND last_dispatched_at IS NOT NULL"
+            ),
+        ),
     )
 
     job_uuid: Mapped[UUID] = mapped_column(

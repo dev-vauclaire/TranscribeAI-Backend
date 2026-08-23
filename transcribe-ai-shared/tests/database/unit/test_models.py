@@ -69,7 +69,11 @@ def test_transcription_job_dispatch_columns_match_contract():
 def test_transcription_job_indexes_match_repository_queries():
     indexes = {index.name: index for index in TranscriptionJob.__table__.indexes}
 
-    assert indexes.keys() == {"idx_job_dispatch", "idx_job_expired_lease"}
+    assert indexes.keys() == {
+        "idx_job_dispatch",
+        "idx_job_expired_lease",
+        "idx_job_stale_dispatch",
+    }
 
     dispatch_index = indexes["idx_job_dispatch"]
     assert tuple(column.name for column in dispatch_index.columns) == ("created_at",)
@@ -83,6 +87,16 @@ def test_transcription_job_indexes_match_repository_queries():
     )
     assert str(expired_lease_index.dialect_options["postgresql"]["where"]) == (
         "status = 'PROCESSING'"
+    )
+
+    stale_dispatch_index = indexes["idx_job_stale_dispatch"]
+    assert tuple(column.name for column in stale_dispatch_index.columns) == (
+        "last_dispatched_at",
+        "job_uuid",
+    )
+    assert str(stale_dispatch_index.dialect_options["postgresql"]["where"]) == (
+        "status = 'QUEUED' AND dispatch_required IS FALSE "
+        "AND last_dispatched_at IS NOT NULL"
     )
 
 

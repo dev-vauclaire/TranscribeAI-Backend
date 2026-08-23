@@ -25,6 +25,11 @@ contraintes et deux index partiels : `idx_job_dispatch` pour les jobs en attente
 de publication et `idx_job_expired_lease` pour les leases expirés des jobs en
 cours de traitement.
 
+La révision `0002_add_stale_dispatch_index` ajoute l'index partiel
+`idx_job_stale_dispatch(last_dispatched_at, job_uuid)` pour parcourir les
+anciennes publications `QUEUED` confirmées par PostgreSQL et potentiellement
+perdues dans Redis.
+
 ## Tests de migration
 
 Chaque révision possède un fichier `test_<revision_id>.py`. Il vérifie

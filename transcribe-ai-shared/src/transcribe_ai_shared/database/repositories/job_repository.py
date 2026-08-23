@@ -1,5 +1,5 @@
 from collections.abc import Collection
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import batched
 from uuid import UUID
 
@@ -24,6 +24,18 @@ def _literal_job_status(status: JobStatus) -> ColumnElement[JobStatus]:
         type_=TranscriptionJob.status.type,
         literal_execute=True,
     )
+
+
+def _validate_reconciliation_timeout_seconds(
+    reconciliation_timeout_seconds: int,
+) -> None:
+    if (
+        type(reconciliation_timeout_seconds) is not int
+        or reconciliation_timeout_seconds <= 0
+    ):
+        raise ValueError(
+            "reconciliation_timeout_seconds doit être un entier strictement positif"
+        )
 
 
 class JobRepository:
@@ -93,15 +105,15 @@ class JobRepository:
         self,
         job_uuid: UUID,
         expected_attempt_count: int,
-        dispatched_at: datetime,
+        expected_last_dispatched_at: datetime | None,
     ) -> bool:
         """Confirme par CAS la publication de la tentative attendue.
 
         Le worker peut passer le job à ``PROCESSING`` entre la publication Redis
         et cette mise à jour PostgreSQL : le statut n'est donc pas filtré. La
-        garde sur ``attempt_count`` empêche une confirmation retardée d'annuler
-        le réarmement créé par une requeue. ``False`` indique que le job est
-        absent, déjà confirmé ou passé à une tentative plus récente.
+        garde sur ``attempt_count`` et le dernier horodatage observé empêche une
+        confirmation retardée d'annuler un réarmement plus récent. ``False``
+        indique que le job est absent, déjà confirmé ou que son état a changé.
         """
         statement = (
             update(TranscriptionJob)
@@ -109,11 +121,74 @@ class JobRepository:
                 TranscriptionJob.job_uuid == job_uuid,
                 TranscriptionJob.dispatch_required.is_(True),
                 TranscriptionJob.attempt_count == expected_attempt_count,
+                TranscriptionJob.last_dispatched_at.is_not_distinct_from(
+                    expected_last_dispatched_at
+                ),
             )
             .values(
                 dispatch_required=False,
-                last_dispatched_at=dispatched_at,
+                last_dispatched_at=func.now(),
             )
+        )
+        result = await self._session.execute(statement)
+        return result.rowcount == 1
+
+    async def find_stale_dispatched_jobs(
+        self,
+        limit: int,
+        reconciliation_timeout_seconds: int,
+    ) -> list[TranscriptionJob]:
+        """Liste les anciennes publications confirmées à vérifier.
+
+        Cette lecture sans verrou peut retourner les mêmes jobs à plusieurs
+        dispatchers. ``rearm_stale_dispatch`` arbitre ensuite chaque transition
+        avec un compare-and-set sur l'état observé.
+        """
+        _validate_reconciliation_timeout_seconds(reconciliation_timeout_seconds)
+        stale_before = func.now() - timedelta(seconds=reconciliation_timeout_seconds)
+        statement = (
+            select(TranscriptionJob)
+            .where(
+                TranscriptionJob.status == _literal_job_status(JobStatus.QUEUED),
+                TranscriptionJob.dispatch_required.is_(False),
+                TranscriptionJob.last_dispatched_at.is_not(None),
+                TranscriptionJob.last_dispatched_at < stale_before,
+            )
+            .order_by(
+                TranscriptionJob.last_dispatched_at.asc(),
+                TranscriptionJob.job_uuid.asc(),
+            )
+            .limit(limit)
+        )
+        result = await self._session.scalars(statement)
+        return list(result.all())
+
+    async def rearm_stale_dispatch(
+        self,
+        job_uuid: UUID,
+        expected_attempt_count: int,
+        expected_last_dispatched_at: datetime,
+        reconciliation_timeout_seconds: int,
+    ) -> bool:
+        """Réarme par CAS une publication confirmée ancienne et potentiellement perdue.
+
+        L'égalité sur l'horodatage observé protège notamment contre une nouvelle
+        publication confirmée entre la sélection et cette transition.
+        """
+        _validate_reconciliation_timeout_seconds(reconciliation_timeout_seconds)
+        stale_before = func.now() - timedelta(seconds=reconciliation_timeout_seconds)
+        statement = (
+            update(TranscriptionJob)
+            .where(
+                TranscriptionJob.job_uuid == job_uuid,
+                TranscriptionJob.status == JobStatus.QUEUED,
+                TranscriptionJob.dispatch_required.is_(False),
+                TranscriptionJob.attempt_count == expected_attempt_count,
+                TranscriptionJob.last_dispatched_at.is_not(None),
+                TranscriptionJob.last_dispatched_at == expected_last_dispatched_at,
+                TranscriptionJob.last_dispatched_at < stale_before,
+            )
+            .values(dispatch_required=True)
         )
         result = await self._session.execute(statement)
         return result.rowcount == 1

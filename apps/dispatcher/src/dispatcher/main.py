@@ -11,7 +11,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 async def _run_from_environment() -> DispatcherCycleResult:
-    """Charge la configuration puis traite un cycle recovery/dispatch."""
+    """Charge la configuration puis traite un cycle complet du dispatcher."""
     return await run_dispatch_cycle(
         database_settings=DatabaseSettings(),
         redis_settings=RedisSettings(),
@@ -27,6 +27,13 @@ def _log_summary(result: DispatcherCycleResult) -> None:
         result.recovery.failed_count,
         result.recovery.stale_count,
         result.recovery.error_count,
+    )
+    LOGGER.info(
+        "dispatch_reconciliation_summary selected=%s rearmed=%s stale=%s errors=%s",
+        result.reconciliation.selected_count,
+        result.reconciliation.rearmed_count,
+        result.reconciliation.stale_count,
+        result.reconciliation.error_count,
     )
     LOGGER.info(
         "dispatch_batch_summary selected=%s published=%s confirmed=%s "
@@ -57,7 +64,13 @@ def main() -> int:
         return 1
 
     _log_summary(result)
-    return 1 if result.recovery.error_count or result.dispatch.error_count else 0
+    if (
+        result.recovery.error_count
+        or result.reconciliation.error_count
+        or result.dispatch.error_count
+    ):
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

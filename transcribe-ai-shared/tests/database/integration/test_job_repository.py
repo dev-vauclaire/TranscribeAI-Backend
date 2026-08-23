@@ -265,6 +265,316 @@ async def test_find_jobs_requiring_dispatch_filters_orders_and_limits(
     ]
 
 
+async def test_find_stale_dispatched_jobs_filters_orders_and_limits(
+    async_session_factory,
+) -> None:
+    current_time = datetime.now(timezone.utc)
+    oldest_uuid = await persist_job(
+        async_session_factory,
+        job_uuid=UUID("00000000-0000-0000-0000-000000000003"),
+        dispatch_required=False,
+        last_dispatched_at=current_time - timedelta(minutes=20),
+    )
+    first_tied_uuid = await persist_job(
+        async_session_factory,
+        job_uuid=UUID("00000000-0000-0000-0000-000000000001"),
+        dispatch_required=False,
+        last_dispatched_at=current_time - timedelta(minutes=10),
+    )
+    second_tied_uuid = await persist_job(
+        async_session_factory,
+        job_uuid=UUID("00000000-0000-0000-0000-000000000002"),
+        dispatch_required=False,
+        last_dispatched_at=current_time - timedelta(minutes=10),
+    )
+    await persist_job(
+        async_session_factory,
+        dispatch_required=False,
+        last_dispatched_at=current_time - timedelta(minutes=1),
+    )
+    await persist_job(
+        async_session_factory,
+        dispatch_required=True,
+        last_dispatched_at=current_time - timedelta(minutes=30),
+    )
+    await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        dispatch_required=False,
+        last_dispatched_at=current_time - timedelta(minutes=30),
+        lease_owner="worker-fast-1",
+        lease_expires_at=current_time + timedelta(minutes=30),
+    )
+    await persist_job(
+        async_session_factory,
+        dispatch_required=False,
+        last_dispatched_at=None,
+    )
+    await persist_job(
+        async_session_factory,
+        status=JobStatus.FAILED,
+        dispatch_required=False,
+        last_dispatched_at=current_time - timedelta(minutes=30),
+    )
+
+    async with async_session_factory() as session:
+        repository = JobRepository(session)
+        limited_jobs = await repository.find_stale_dispatched_jobs(
+            limit=2,
+            reconciliation_timeout_seconds=300,
+        )
+        all_jobs = await repository.find_stale_dispatched_jobs(
+            limit=10,
+            reconciliation_timeout_seconds=300,
+        )
+
+    assert [job.job_uuid for job in limited_jobs] == [
+        oldest_uuid,
+        first_tied_uuid,
+    ]
+    assert [job.job_uuid for job in all_jobs] == [
+        oldest_uuid,
+        first_tied_uuid,
+        second_tied_uuid,
+    ]
+
+
+@pytest.mark.parametrize("invalid_timeout", [0, -1, True, 1.5])
+async def test_stale_dispatch_operations_reject_an_invalid_timeout(
+    async_session_factory,
+    invalid_timeout,
+) -> None:
+    async with async_session_factory() as session:
+        repository = JobRepository(session)
+        with pytest.raises(
+            ValueError,
+            match="reconciliation_timeout_seconds",
+        ):
+            await repository.find_stale_dispatched_jobs(
+                limit=10,
+                reconciliation_timeout_seconds=invalid_timeout,
+            )
+        with pytest.raises(
+            ValueError,
+            match="reconciliation_timeout_seconds",
+        ):
+            await repository.rearm_stale_dispatch(
+                uuid4(),
+                0,
+                NOW,
+                invalid_timeout,
+            )
+
+
+async def test_rearm_stale_dispatch_updates_only_the_dispatch_flag(
+    async_session_factory,
+) -> None:
+    last_dispatched_at = datetime.now(timezone.utc) - timedelta(minutes=20)
+    job_uuid = await persist_job(
+        async_session_factory,
+        dispatch_required=False,
+        last_dispatched_at=last_dispatched_at,
+        attempt_count=2,
+        last_error="PREVIOUS_ERROR",
+    )
+
+    async with async_session_factory.begin() as session:
+        rearmed = await JobRepository(session).rearm_stale_dispatch(
+            job_uuid,
+            2,
+            last_dispatched_at,
+            300,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert rearmed is True
+    assert saved is not None
+    assert saved.status is JobStatus.QUEUED
+    assert saved.dispatch_required is True
+    assert saved.attempt_count == 2
+    assert saved.last_dispatched_at == last_dispatched_at
+    assert saved.last_error == "PREVIOUS_ERROR"
+
+
+async def test_rearm_stale_dispatch_refuses_a_recent_confirmation(
+    async_session_factory,
+) -> None:
+    last_dispatched_at = datetime.now(timezone.utc) - timedelta(seconds=30)
+    job_uuid = await persist_job(
+        async_session_factory,
+        dispatch_required=False,
+        last_dispatched_at=last_dispatched_at,
+    )
+
+    async with async_session_factory.begin() as session:
+        rearmed = await JobRepository(session).rearm_stale_dispatch(
+            job_uuid,
+            0,
+            last_dispatched_at,
+            300,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert rearmed is False
+    assert saved is not None
+    assert saved.dispatch_required is False
+    assert saved.last_dispatched_at == last_dispatched_at
+
+
+async def test_rearm_stale_dispatch_refuses_a_changed_attempt(
+    async_session_factory,
+) -> None:
+    last_dispatched_at = datetime.now(timezone.utc) - timedelta(minutes=20)
+    job_uuid = await persist_job(
+        async_session_factory,
+        dispatch_required=False,
+        last_dispatched_at=last_dispatched_at,
+        attempt_count=2,
+    )
+
+    async with async_session_factory.begin() as session:
+        rearmed = await JobRepository(session).rearm_stale_dispatch(
+            job_uuid,
+            1,
+            last_dispatched_at,
+            300,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert rearmed is False
+    assert saved is not None
+    assert saved.dispatch_required is False
+    assert saved.attempt_count == 2
+
+
+async def test_rearm_stale_dispatch_refuses_a_changed_timestamp(
+    async_session_factory,
+) -> None:
+    last_dispatched_at = datetime.now(timezone.utc) - timedelta(minutes=20)
+    job_uuid = await persist_job(
+        async_session_factory,
+        dispatch_required=False,
+        last_dispatched_at=last_dispatched_at,
+    )
+
+    async with async_session_factory.begin() as session:
+        rearmed = await JobRepository(session).rearm_stale_dispatch(
+            job_uuid,
+            0,
+            last_dispatched_at - timedelta(seconds=1),
+            300,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert rearmed is False
+    assert saved is not None
+    assert saved.dispatch_required is False
+    assert saved.last_dispatched_at == last_dispatched_at
+
+
+async def test_rearm_stale_dispatch_refuses_a_job_no_longer_queued(
+    async_session_factory,
+) -> None:
+    current_time = datetime.now(timezone.utc)
+    last_dispatched_at = current_time - timedelta(minutes=20)
+    job_uuid = await persist_job(
+        async_session_factory,
+        status=JobStatus.PROCESSING,
+        dispatch_required=False,
+        last_dispatched_at=last_dispatched_at,
+        lease_owner="worker-fast-1",
+        lease_expires_at=current_time + timedelta(minutes=10),
+    )
+
+    async with async_session_factory.begin() as session:
+        rearmed = await JobRepository(session).rearm_stale_dispatch(
+            job_uuid,
+            0,
+            last_dispatched_at,
+            300,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert rearmed is False
+    assert saved is not None
+    assert saved.status is JobStatus.PROCESSING
+    assert saved.dispatch_required is False
+
+
+async def test_rearm_stale_dispatch_is_atomic_between_two_reconcilers(
+    async_session_factory,
+) -> None:
+    last_dispatched_at = datetime.now(timezone.utc) - timedelta(minutes=20)
+    job_uuid = await persist_job(
+        async_session_factory,
+        dispatch_required=False,
+        last_dispatched_at=last_dispatched_at,
+        attempt_count=2,
+    )
+    barrier = asyncio.Barrier(2)
+
+    async def attempt_rearm() -> bool:
+        async with async_transaction(async_session_factory) as session:
+            await barrier.wait()
+            return await JobRepository(session).rearm_stale_dispatch(
+                job_uuid,
+                2,
+                last_dispatched_at,
+                300,
+            )
+
+    outcomes = await asyncio.wait_for(
+        asyncio.gather(attempt_rearm(), attempt_rearm()),
+        timeout=10,
+    )
+
+    assert sorted(outcomes) == [False, True]
+    saved = await read_job(async_session_factory, job_uuid)
+    assert saved is not None
+    assert saved.dispatch_required is True
+    assert saved.attempt_count == 2
+    assert saved.last_dispatched_at == last_dispatched_at
+
+
+async def test_stale_rearm_refuses_a_snapshot_after_a_new_confirmation(
+    async_session_factory,
+) -> None:
+    selected_timestamp = datetime.now(timezone.utc) - timedelta(minutes=20)
+    job_uuid = await persist_job(
+        async_session_factory,
+        dispatch_required=False,
+        last_dispatched_at=selected_timestamp,
+    )
+
+    async with async_session_factory.begin() as session:
+        repository = JobRepository(session)
+        assert await repository.rearm_stale_dispatch(
+            job_uuid,
+            0,
+            selected_timestamp,
+            300,
+        )
+        assert await repository.mark_dispatched(
+            job_uuid,
+            0,
+            selected_timestamp,
+        )
+
+    async with async_session_factory.begin() as session:
+        stale_rearm = await JobRepository(session).rearm_stale_dispatch(
+            job_uuid,
+            0,
+            selected_timestamp,
+            300,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert stale_rearm is False
+    assert saved is not None
+    assert saved.dispatch_required is False
+    assert saved.last_dispatched_at != selected_timestamp
+
+
 async def test_mark_dispatched_updates_a_job_requiring_dispatch(
     async_session_factory,
 ) -> None:
@@ -274,14 +584,17 @@ async def test_mark_dispatched_updates_a_job_requiring_dispatch(
         attempt_count=2,
     )
 
+    before_dispatch = datetime.now(timezone.utc)
     async with async_session_factory.begin() as session:
-        dispatched = await JobRepository(session).mark_dispatched(job_uuid, 2, NOW)
+        dispatched = await JobRepository(session).mark_dispatched(job_uuid, 2, None)
+    after_dispatch = datetime.now(timezone.utc)
 
     saved = await read_job(async_session_factory, job_uuid)
     assert dispatched is True
     assert saved is not None
     assert saved.dispatch_required is False
-    assert saved.last_dispatched_at == NOW
+    assert saved.last_dispatched_at is not None
+    assert before_dispatch <= saved.last_dispatched_at <= after_dispatch
     assert saved.attempt_count == 2
 
 
@@ -289,7 +602,7 @@ async def test_mark_dispatched_returns_false_for_an_unknown_job(
     async_session_factory,
 ) -> None:
     async with async_session_factory.begin() as session:
-        dispatched = await JobRepository(session).mark_dispatched(uuid4(), 0, NOW)
+        dispatched = await JobRepository(session).mark_dispatched(uuid4(), 0, None)
 
     assert dispatched is False
 
@@ -305,13 +618,77 @@ async def test_mark_dispatched_refuses_a_job_already_marked_as_dispatched(
     )
 
     async with async_session_factory.begin() as session:
-        dispatched = await JobRepository(session).mark_dispatched(job_uuid, 0, NOW)
+        dispatched = await JobRepository(session).mark_dispatched(
+            job_uuid,
+            0,
+            previous_dispatch,
+        )
 
     saved = await read_job(async_session_factory, job_uuid)
     assert dispatched is False
     assert saved is not None
     assert saved.dispatch_required is False
     assert saved.last_dispatched_at == previous_dispatch
+
+
+async def test_mark_dispatched_refuses_a_changed_last_dispatch_timestamp(
+    async_session_factory,
+) -> None:
+    last_dispatched_at = NOW - timedelta(minutes=5)
+    job_uuid = await persist_job(
+        async_session_factory,
+        dispatch_required=True,
+        last_dispatched_at=last_dispatched_at,
+        attempt_count=2,
+    )
+
+    async with async_session_factory.begin() as session:
+        dispatched = await JobRepository(session).mark_dispatched(
+            job_uuid,
+            2,
+            last_dispatched_at - timedelta(seconds=1),
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert dispatched is False
+    assert saved is not None
+    assert saved.dispatch_required is True
+    assert saved.last_dispatched_at == last_dispatched_at
+
+
+async def test_delayed_confirmation_cannot_clear_a_rearmed_dispatch(
+    async_session_factory,
+) -> None:
+    current_time = datetime.now(timezone.utc)
+    previous_dispatch_token = current_time - timedelta(minutes=30)
+    confirmed_dispatch_token = current_time - timedelta(minutes=20)
+    job_uuid = await persist_job(
+        async_session_factory,
+        dispatch_required=False,
+        last_dispatched_at=confirmed_dispatch_token,
+        attempt_count=2,
+    )
+
+    async with async_session_factory.begin() as session:
+        repository = JobRepository(session)
+        rearmed = await repository.rearm_stale_dispatch(
+            job_uuid,
+            2,
+            confirmed_dispatch_token,
+            300,
+        )
+        delayed_confirmation = await repository.mark_dispatched(
+            job_uuid,
+            2,
+            previous_dispatch_token,
+        )
+
+    saved = await read_job(async_session_factory, job_uuid)
+    assert rearmed is True
+    assert delayed_confirmation is False
+    assert saved is not None
+    assert saved.dispatch_required is True
+    assert saved.last_dispatched_at == confirmed_dispatch_token
 
 
 async def test_mark_dispatched_accepts_a_job_already_claimed_by_a_worker(
@@ -326,15 +703,18 @@ async def test_mark_dispatched_accepts_a_job_already_claimed_by_a_worker(
         attempt_count=3,
     )
 
+    before_dispatch = datetime.now(timezone.utc)
     async with async_session_factory.begin() as session:
-        dispatched = await JobRepository(session).mark_dispatched(job_uuid, 3, NOW)
+        dispatched = await JobRepository(session).mark_dispatched(job_uuid, 3, None)
+    after_dispatch = datetime.now(timezone.utc)
 
     saved = await read_job(async_session_factory, job_uuid)
     assert dispatched is True
     assert saved is not None
     assert saved.status is JobStatus.PROCESSING
     assert saved.dispatch_required is False
-    assert saved.last_dispatched_at == NOW
+    assert saved.last_dispatched_at is not None
+    assert before_dispatch <= saved.last_dispatched_at <= after_dispatch
 
 
 async def test_mark_dispatched_refuses_a_stale_attempt_after_requeue(
@@ -360,7 +740,11 @@ async def test_mark_dispatched_refuses_a_stale_attempt_after_requeue(
             expired_lease,
             should_retry=True,
         )
-        dispatched = await repository.mark_dispatched(job_uuid, 2, NOW)
+        dispatched = await repository.mark_dispatched(
+            job_uuid,
+            2,
+            previous_dispatch,
+        )
 
     saved = await read_job(async_session_factory, job_uuid)
     assert requeued is True
@@ -386,7 +770,7 @@ async def test_mark_dispatched_does_not_commit_the_callers_transaction(
             dispatched = await JobRepository(session).mark_dispatched(
                 job_uuid,
                 4,
-                NOW,
+                None,
             )
             assert dispatched is True
             raise RuntimeError("rollback requested")

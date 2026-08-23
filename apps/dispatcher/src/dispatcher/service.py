@@ -1,17 +1,11 @@
-from collections.abc import Callable
-from datetime import UTC, datetime
 import logging
 
-from dispatcher.models import DispatchBatchResult
+from dispatcher.models import DispatchBatchResult, DispatchJobSnapshot
 from dispatcher.protocols import DispatchJobStore
-from transcribe_ai_shared import TranscriptionStreams
+from transcribe_ai_shared import JobStreamMessage, TranscriptionStreams
 
 
 LOGGER = logging.getLogger(__name__)
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
 
 
 class DispatcherService:
@@ -22,11 +16,9 @@ class DispatcherService:
         *,
         job_store: DispatchJobStore,
         streams: TranscriptionStreams,
-        clock: Callable[[], datetime] = _utc_now,
     ) -> None:
         self._job_store = job_store
         self._streams = streams
-        self._clock = clock
 
     async def dispatch_batch(self, batch_size: int) -> DispatchBatchResult:
         """Exécute un batch one-shot sans interrompre les jobs suivants sur erreur."""
@@ -42,14 +34,11 @@ class DispatcherService:
         for job in jobs:
             redis_message_id: str | None = None
             try:
-                redis_message_id = await self._streams.publish(job)
-                published_count += 1
-                dispatched_at = self._current_time()
-                confirmed = await self._job_store.mark_dispatched(
-                    job.job_uuid,
-                    job.attempt_count,
-                    dispatched_at,
+                redis_message_id = await self._streams.publish(
+                    self._message_from_snapshot(job)
                 )
+                published_count += 1
+                confirmed = await self._job_store.mark_dispatched(job)
             except Exception as error:
                 error_count += 1
                 LOGGER.warning(
@@ -92,13 +81,11 @@ class DispatcherService:
             error_count=error_count,
         )
 
-    def _current_time(self) -> datetime:
-        """Normalise l'horloge injectée en UTC avant l'écriture TIMESTAMPTZ."""
-        current_time = self._clock()
-        if (
-            not isinstance(current_time, datetime)
-            or current_time.tzinfo is None
-            or current_time.utcoffset() is None
-        ):
-            raise ValueError("clock doit retourner une date avec fuseau horaire")
-        return current_time.astimezone(UTC)
+    @staticmethod
+    def _message_from_snapshot(snapshot: DispatchJobSnapshot) -> JobStreamMessage:
+        """N'expose dans Redis que le contrat nécessaire aux workers."""
+        return JobStreamMessage(
+            job_uuid=snapshot.job_uuid,
+            job_type=snapshot.job_type,
+            attempt_count=snapshot.attempt_count,
+        )

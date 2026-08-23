@@ -76,9 +76,19 @@ la confirmation d'une publication réussie. Cette confirmation reste dans la
 transaction de l'appelant : le dispatcher ne doit l'exécuter qu'après le succès
 de la publication Redis.
 
-Deux index PostgreSQL partiels ciblent les files de travail actives : les jobs
-`QUEUED` à dispatcher, ordonnés par création, et les jobs `PROCESSING` dont le
-lease doit être surveillé, ordonnés par expiration.
+Trois index PostgreSQL partiels ciblent les files de travail actives :
+
+- `idx_job_dispatch` sélectionne les jobs `QUEUED` à publier, ordonnés par
+  création ;
+- `idx_job_expired_lease` sélectionne les jobs `PROCESSING` dont le lease doit
+  être surveillé, ordonnés par expiration ;
+- `idx_job_stale_dispatch` sélectionne les anciennes publications confirmées
+  qui peuvent avoir disparu de Redis, ordonnées par `last_dispatched_at`.
+
+Les primitives de réconciliation réarment uniquement `dispatch_required` avec
+un compare-and-set sur le statut, l'`attempt_count` et l'horodatage observés.
+Elles ne modifient jamais l'`attempt_count` : reconstruire un message Redis
+n'est pas une nouvelle tentative métier.
 
 ## Configuration
 

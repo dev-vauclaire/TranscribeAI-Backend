@@ -38,7 +38,6 @@ WORKER_ID = "worker-fast-1"
 RECOVERY_WORKER_ID = "worker-fast-recovery-1"
 JOB_UUID = UUID("12345678-1234-5678-1234-567812345678")
 NOW = datetime(2099, 1, 1, 12, tzinfo=UTC)
-DISPATCHED_AT = NOW + timedelta(minutes=10)
 LEASE_DURATION = timedelta(minutes=5)
 MAX_ATTEMPTS = 3
 
@@ -267,7 +266,6 @@ async def test_retryable_failure_commits_requeue_then_dispatches_a_new_attempt(
     dispatch_result = await DispatcherService(
         job_store=PostgresDispatchJobStore(async_session_factory),
         streams=worker_redis.streams,
-        clock=lambda: DISPATCHED_AT,
     ).dispatch_batch(10)
 
     assert dispatch_result.selected_count == 1
@@ -285,7 +283,7 @@ async def test_retryable_failure_commits_requeue_then_dispatches_a_new_attempt(
     assert dispatched_job.status is JobStatus.QUEUED
     assert dispatched_job.attempt_count == 1
     assert dispatched_job.dispatch_required is False
-    assert dispatched_job.last_dispatched_at == DISPATCHED_AT
+    assert dispatched_job.last_dispatched_at is not None
 
 
 async def test_requeued_attempt_is_not_inferred_again_when_ack_crashes(
@@ -382,7 +380,6 @@ async def test_permanent_failure_is_committed_then_acknowledged_without_redispat
     dispatch_result = await DispatcherService(
         job_store=PostgresDispatchJobStore(async_session_factory),
         streams=worker_redis.streams,
-        clock=lambda: DISPATCHED_AT,
     ).dispatch_batch(10)
 
     assert dispatch_result.selected_count == 0
@@ -437,7 +434,6 @@ async def test_last_retryable_attempt_becomes_failed_without_redispatch(
     dispatch_result = await DispatcherService(
         job_store=PostgresDispatchJobStore(async_session_factory),
         streams=worker_redis.streams,
-        clock=lambda: DISPATCHED_AT,
     ).dispatch_batch(10)
 
     assert dispatch_result.selected_count == 0

@@ -7,12 +7,12 @@ import redis.asyncio as redis_asyncio
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from dispatcher.models import DispatchJobSnapshot
 from dispatcher.postgresql import PostgresDispatchJobStore
 from dispatcher.service import DispatcherService
 from transcribe_ai_shared import (
     JobRepository,
     JobStatus,
-    JobStreamMessage,
     JobType,
     RedisTranscriptionStreams,
     TranscriptionJob,
@@ -80,23 +80,19 @@ class RefusingMarkStore:
 
     def __init__(self, delegate: PostgresDispatchJobStore) -> None:
         self._delegate = delegate
-        self.mark_calls: list[tuple[UUID, int, datetime]] = []
+        self.mark_calls: list[DispatchJobSnapshot] = []
 
     async def find_jobs_requiring_dispatch(
         self,
         limit: int,
-    ) -> list[JobStreamMessage]:
+    ) -> list[DispatchJobSnapshot]:
         return await self._delegate.find_jobs_requiring_dispatch(limit)
 
     async def mark_dispatched(
         self,
-        job_uuid: UUID,
-        expected_attempt_count: int,
-        dispatched_at: datetime,
+        snapshot: DispatchJobSnapshot,
     ) -> bool:
-        self.mark_calls.append(
-            (job_uuid, expected_attempt_count, dispatched_at),
-        )
+        self.mark_calls.append(snapshot)
         return False
 
 
@@ -115,23 +111,21 @@ class RequeueBeforeMarkStore:
     async def find_jobs_requiring_dispatch(
         self,
         limit: int,
-    ) -> list[JobStreamMessage]:
+    ) -> list[DispatchJobSnapshot]:
         return await self._delegate.find_jobs_requiring_dispatch(limit)
 
     async def mark_dispatched(
         self,
-        job_uuid: UUID,
-        expected_attempt_count: int,
-        dispatched_at: datetime,
+        snapshot: DispatchJobSnapshot,
     ) -> bool:
-        self.observed_attempt_count = expected_attempt_count
+        self.observed_attempt_count = snapshot.attempt_count
         expired_lease = datetime(2000, 1, 1, tzinfo=UTC)
 
         async with self._session_factory.begin() as session:
             # Le worker a claim le message publié, puis son lease a expiré.
             await session.execute(
                 update(TranscriptionJob)
-                .where(TranscriptionJob.job_uuid == job_uuid)
+                .where(TranscriptionJob.job_uuid == snapshot.job_uuid)
                 .values(
                     status=JobStatus.PROCESSING,
                     lease_owner="expired-worker",
@@ -139,18 +133,14 @@ class RequeueBeforeMarkStore:
                 )
             )
             requeued = await JobRepository(session).recover_expired_job(
-                job_uuid,
-                expected_attempt_count,
+                snapshot.job_uuid,
+                snapshot.attempt_count,
                 expired_lease,
                 should_retry=True,
             )
             assert requeued is True
 
-        return await self._delegate.mark_dispatched(
-            job_uuid,
-            expected_attempt_count,
-            dispatched_at,
-        )
+        return await self._delegate.mark_dispatched(snapshot)
 
 
 async def test_dispatch_batch_publishes_only_eligible_jobs_to_matching_stream(
@@ -200,7 +190,6 @@ async def test_dispatch_batch_publishes_only_eligible_jobs_to_matching_stream(
     service = DispatcherService(
         job_store=store,
         streams=dispatcher_redis.streams,
-        clock=lambda: NOW,
     )
 
     await service.dispatch_batch(10)
@@ -225,7 +214,7 @@ async def test_dispatch_batch_publishes_only_eligible_jobs_to_matching_stream(
     )
     for job_uuid in (first_fast_uuid, batch_uuid, second_fast_uuid):
         assert saved[job_uuid].dispatch_required is False
-        assert saved[job_uuid].last_dispatched_at == NOW
+        assert saved[job_uuid].last_dispatched_at is not None
 
     assert saved[already_dispatched_uuid].dispatch_required is False
     assert saved[already_dispatched_uuid].last_dispatched_at is None
@@ -249,13 +238,19 @@ async def test_second_run_republishes_when_first_mark_did_not_match(
     await DispatcherService(
         job_store=refusing_store,
         streams=dispatcher_redis.streams,
-        clock=lambda: NOW,
     ).dispatch_batch(10)
 
     after_first_run = await load_jobs(async_session_factory, job_uuid)
     assert after_first_run[job_uuid].dispatch_required is True
     assert after_first_run[job_uuid].last_dispatched_at is None
-    assert refusing_store.mark_calls == [(job_uuid, 0, NOW)]
+    assert refusing_store.mark_calls == [
+        DispatchJobSnapshot(
+            job_uuid=job_uuid,
+            job_type=JobType.FAST,
+            attempt_count=0,
+            last_dispatched_at=None,
+        )
+    ]
     first_entries = await dispatcher_redis.client.xrange(FAST_STREAM)
     assert [payload for _, payload in first_entries] == [
         {"job_uuid": str(job_uuid), "attempt_count": "0"},
@@ -264,7 +259,6 @@ async def test_second_run_republishes_when_first_mark_did_not_match(
     await DispatcherService(
         job_store=real_store,
         streams=dispatcher_redis.streams,
-        clock=lambda: NOW,
     ).dispatch_batch(10)
 
     entries_after_second_run = await dispatcher_redis.client.xrange(FAST_STREAM)
@@ -276,7 +270,7 @@ async def test_second_run_republishes_when_first_mark_did_not_match(
     ]
     saved = await load_jobs(async_session_factory, job_uuid)
     assert saved[job_uuid].dispatch_required is False
-    assert saved[job_uuid].last_dispatched_at == NOW
+    assert saved[job_uuid].last_dispatched_at is not None
 
 
 async def test_stale_attempt_cannot_clear_dispatch_required_after_requeue(
@@ -296,7 +290,6 @@ async def test_stale_attempt_cannot_clear_dispatch_required_after_requeue(
     await DispatcherService(
         job_store=stale_store,
         streams=dispatcher_redis.streams,
-        clock=lambda: NOW,
     ).dispatch_batch(10)
 
     assert stale_store.observed_attempt_count == 0

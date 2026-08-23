@@ -1,9 +1,10 @@
-from datetime import datetime
 from typing import Protocol
-from uuid import UUID
 
-from dispatcher.models import ExpiredJobSnapshot
-from transcribe_ai_shared import JobStreamMessage
+from dispatcher.models import (
+    DispatchJobSnapshot,
+    ExpiredJobSnapshot,
+    StaleDispatchSnapshot,
+)
 
 
 class DispatchJobStore(Protocol):
@@ -12,17 +13,15 @@ class DispatchJobStore(Protocol):
     async def find_jobs_requiring_dispatch(
         self,
         limit: int,
-    ) -> list[JobStreamMessage]:
+    ) -> list[DispatchJobSnapshot]:
         """Retourne un snapshot des jobs à publier, sans conserver de session."""
         ...
 
     async def mark_dispatched(
         self,
-        job_uuid: UUID,
-        expected_attempt_count: int,
-        dispatched_at: datetime,
+        snapshot: DispatchJobSnapshot,
     ) -> bool:
-        """Confirme la publication par comparaison avec la tentative observée."""
+        """Confirme la publication par comparaison avec le snapshot observé."""
         ...
 
 
@@ -43,4 +42,24 @@ class ExpiredJobStore(Protocol):
         should_retry: bool,
     ) -> bool:
         """Applique la transition si le lease observé est toujours expiré."""
+        ...
+
+
+class DispatchReconciliationStore(Protocol):
+    """Port PostgreSQL nécessaire à la réconciliation des publications."""
+
+    async def find_stale_dispatched_jobs(
+        self,
+        limit: int,
+        reconciliation_timeout_seconds: int,
+    ) -> list[StaleDispatchSnapshot]:
+        """Liste un batch de publications anciennes selon l'horloge PostgreSQL."""
+        ...
+
+    async def rearm_stale_dispatch(
+        self,
+        snapshot: StaleDispatchSnapshot,
+        reconciliation_timeout_seconds: int,
+    ) -> bool:
+        """Réarme la publication si le snapshot est toujours obsolète."""
         ...

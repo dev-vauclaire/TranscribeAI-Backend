@@ -6,6 +6,7 @@ import dispatcher.main as main_module
 from dispatcher.models import (
     DispatchBatchResult,
     DispatcherCycleResult,
+    ReconciliationBatchResult,
     RecoveryBatchResult,
 )
 
@@ -17,6 +18,8 @@ def make_result(
     *,
     recovery_stale_count: int = 0,
     recovery_error_count: int = 0,
+    reconciliation_stale_count: int = 0,
+    reconciliation_error_count: int = 0,
     dispatch_stale_count: int = 0,
     dispatch_error_count: int = 0,
 ) -> DispatcherCycleResult:
@@ -27,6 +30,12 @@ def make_result(
             failed_count=0,
             stale_count=recovery_stale_count,
             error_count=recovery_error_count,
+        ),
+        reconciliation=ReconciliationBatchResult(
+            selected_count=1,
+            rearmed_count=0 if reconciliation_stale_count else 1,
+            stale_count=reconciliation_stale_count,
+            error_count=reconciliation_error_count,
         ),
         dispatch=DispatchBatchResult(
             selected_count=1,
@@ -53,6 +62,8 @@ def test_main_logs_summary_and_returns_zero_when_batch_succeeds(
     assert exit_code == 0
     assert "lease_recovery_summary" in caplog.text
     assert "requeued=1" in caplog.text
+    assert "dispatch_reconciliation_summary" in caplog.text
+    assert "rearmed=1" in caplog.text
     assert "dispatch_batch_summary" in caplog.text
     assert "selected=1" in caplog.text
     assert "confirmed=1" in caplog.text
@@ -62,7 +73,11 @@ def test_main_returns_zero_for_a_stale_confirmation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def stale_dispatch() -> DispatcherCycleResult:
-        return make_result(recovery_stale_count=1, dispatch_stale_count=1)
+        return make_result(
+            recovery_stale_count=1,
+            reconciliation_stale_count=1,
+            dispatch_stale_count=1,
+        )
 
     monkeypatch.setattr(main_module, "_run_from_environment", stale_dispatch)
 
@@ -70,17 +85,23 @@ def test_main_returns_zero_for_a_stale_confirmation(
 
 
 @pytest.mark.parametrize(
-    ("recovery_error_count", "dispatch_error_count"),
-    [(1, 0), (0, 1)],
+    (
+        "recovery_error_count",
+        "reconciliation_error_count",
+        "dispatch_error_count",
+    ),
+    [(1, 0, 0), (0, 1, 0), (0, 0, 1)],
 )
 def test_main_returns_one_when_an_individual_job_failed(
     monkeypatch: pytest.MonkeyPatch,
     recovery_error_count: int,
+    reconciliation_error_count: int,
     dispatch_error_count: int,
 ) -> None:
     async def partially_failed_dispatch() -> DispatcherCycleResult:
         return make_result(
             recovery_error_count=recovery_error_count,
+            reconciliation_error_count=reconciliation_error_count,
             dispatch_error_count=dispatch_error_count,
         )
 
