@@ -45,6 +45,14 @@ class WorkerJobStore(Protocol):
         """Prolonge la tentative encore détenue ou signale sa perte."""
         ...
 
+    async def is_processing_attempt(
+        self,
+        job_uuid: UUID,
+        expected_attempt_count: int,
+    ) -> bool:
+        """Indique si PostgreSQL traite encore exactement cette tentative."""
+        ...
+
 
 class TranscriptionCompleter(Protocol):
     """Port de finalisation durable appelé après une inférence réussie."""

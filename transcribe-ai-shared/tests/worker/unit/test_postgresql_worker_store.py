@@ -12,6 +12,7 @@ from transcribe_ai_shared import (
     AudioLocation,
     ClaimedJob,
     InvalidAudioLocationError,
+    JobStatus,
     JobType,
     PostgresWorkerJobStore,
     TranscriptionJob,
@@ -38,6 +39,12 @@ class RecordingRepository:
         self.outcome = outcome
         self.events = events
         self.calls: list[tuple[UUID, str, datetime, int]] = []
+        self.get_calls: list[UUID] = []
+
+    async def get_by_uuid(self, job_uuid: UUID) -> TranscriptionJob | None:
+        self.events.append("get_by_uuid")
+        self.get_calls.append(job_uuid)
+        return self.outcome
 
     async def claim(
         self,
@@ -53,13 +60,99 @@ class RecordingRepository:
         return self.outcome
 
 
-def make_job(*, audio_job_uuid: UUID = JOB_UUID) -> TranscriptionJob:
+def make_job(
+    *,
+    audio_job_uuid: UUID = JOB_UUID,
+    status: JobStatus = JobStatus.QUEUED,
+    attempt_count: int = EXPECTED_ATTEMPT_COUNT,
+    job_type: JobType = JobType.FAST,
+) -> TranscriptionJob:
     return TranscriptionJob(
         job_uuid=JOB_UUID,
-        job_type=JobType.FAST,
+        status=status,
+        job_type=job_type,
         audio_uri=f"{audio_job_uuid}/input.wav",
-        attempt_count=3,
+        attempt_count=attempt_count,
     )
+
+
+async def test_is_processing_attempt_reads_and_closes_a_short_session() -> None:
+    events: list[str] = []
+    session = object()
+
+    @asynccontextmanager
+    async def recording_session() -> AsyncGenerator[object, None]:
+        events.append("session_enter")
+        yield session
+        events.append("session_close")
+
+    repository = RecordingRepository(
+        session,
+        make_job(status=JobStatus.PROCESSING),
+        events,
+    )
+    store = PostgresWorkerJobStore(
+        cast(AsyncSessionFactory, recording_session),
+        expected_job_type=JobType.FAST,
+        repository_factory=lambda received_session: repository,
+    )
+
+    is_processing = await store.is_processing_attempt(
+        JOB_UUID,
+        EXPECTED_ATTEMPT_COUNT,
+    )
+
+    assert is_processing is True
+    assert repository.session is session
+    assert repository.get_calls == [JOB_UUID]
+    assert events == ["session_enter", "get_by_uuid", "session_close"]
+
+
+@pytest.mark.parametrize(
+    "job",
+    [
+        None,
+        make_job(status=JobStatus.QUEUED),
+        make_job(status=JobStatus.COMPLETED),
+        make_job(status=JobStatus.FAILED),
+        make_job(
+            status=JobStatus.PROCESSING,
+            attempt_count=EXPECTED_ATTEMPT_COUNT + 1,
+        ),
+        make_job(status=JobStatus.PROCESSING, job_type=JobType.BATCH),
+    ],
+    ids=[
+        "missing",
+        "queued",
+        "completed",
+        "failed",
+        "attempt-mismatch",
+        "job-type-mismatch",
+    ],
+)
+async def test_is_processing_attempt_rejects_non_matching_job_state(
+    job: TranscriptionJob | None,
+) -> None:
+    events: list[str] = []
+
+    @asynccontextmanager
+    async def recording_session() -> AsyncGenerator[object, None]:
+        yield object()
+
+    repository = RecordingRepository(object(), job, events)
+    store = PostgresWorkerJobStore(
+        cast(AsyncSessionFactory, recording_session),
+        expected_job_type=JobType.FAST,
+        repository_factory=lambda _session: repository,
+    )
+
+    is_processing = await store.is_processing_attempt(
+        JOB_UUID,
+        EXPECTED_ATTEMPT_COUNT,
+    )
+
+    assert is_processing is False
+    assert repository.get_calls == [JOB_UUID]
 
 
 async def test_claim_commits_before_returning_a_detached_snapshot(

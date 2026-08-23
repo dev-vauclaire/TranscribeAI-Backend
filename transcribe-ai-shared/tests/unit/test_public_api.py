@@ -51,6 +51,7 @@ from transcribe_ai_shared import (
     TranscriptionResultSchema,
     TranscriptionStreamName,
     TranscriptionStreams,
+    WorkerClaimDeferred,
     WorkerClaimRejected,
     WorkerCompleted,
     WorkerFailed,
@@ -130,6 +131,7 @@ def test_supported_public_imports_are_available():
     assert TranscriptionResultSchema is not None
     assert TranscriptionStreamName is not None
     assert TranscriptionStreams is not None
+    assert WorkerClaimDeferred is not None
     assert WorkerClaimRejected is not None
     assert WorkerCompleted is not None
     assert WorkerFailed is not None

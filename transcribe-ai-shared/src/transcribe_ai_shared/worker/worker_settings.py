@@ -31,6 +31,8 @@ class WorkerSettings(BaseSettings):
     worker_consumer_group: ConsumerGroupName = "transcription-workers"
     # RedisTranscriptionStreams utilise actuellement un timeout socket de 10 s.
     worker_block_milliseconds: int = Field(default=5_000, gt=0, lt=10_000)
+    worker_autoclaim_interval_seconds: int = Field(default=60, gt=0)
+    worker_autoclaim_min_idle_milliseconds: int = Field(default=300_000, gt=0)
     worker_lease_seconds: int = Field(default=300, gt=0)
     worker_heartbeat_seconds: int = Field(default=60, gt=0)
     max_attempts: int = Field(default=3, ge=1, le=MAX_TOTAL_ATTEMPTS)

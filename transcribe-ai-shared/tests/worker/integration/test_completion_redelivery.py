@@ -170,36 +170,17 @@ async def test_committed_completion_is_not_inferred_again_after_autoclaim(
     assert committed_result is not None
     assert committed_result.result == output.result
 
-    # Le délai de reprise production est ramené à zéro pour garder le test déterministe.
-    # Le seuil nul accélère uniquement le test : la politique de reprise réelle
-    # choisira un temps d'inactivité compatible avec la durée maximale du job.
-    auto_claimed = await worker_redis.streams.autoclaim(
-        JobType.FAST,
-        GROUP_NAME,
-        RECOVERY_WORKER_ID,
-        min_idle_milliseconds=0,
-    )
-    assert len(auto_claimed.messages) == 1
-    recovered_message = auto_claimed.messages[0]
-    assert recovered_message.redis_message_id == redis_message_id
-    pending_after_autoclaim = await worker_redis.client.xpending_range(
-        FAST_STREAM,
-        GROUP_NAME,
-        min="-",
-        max="+",
-        count=1,
-    )
-    assert len(pending_after_autoclaim) == 1
-    assert pending_after_autoclaim[0]["consumer"] == RECOVERY_WORKER_ID
-    assert pending_after_autoclaim[0]["times_delivered"] == 2
-
     recovery_runtime = make_runtime(
         streams=worker_redis.streams,
         session_factory=async_session_factory,
         transcriber=transcriber,
         worker_id=RECOVERY_WORKER_ID,
     )
-    recovered = await recovery_runtime.process_message(recovered_message)
+    # Le seuil nul rend uniquement le message Redis reclaimable immédiatement.
+    # PostgreSQL COMPLETED, et non son idle time, décide de son nettoyage.
+    recovered = await recovery_runtime.process_next_pending(
+        min_idle_milliseconds=0,
+    )
 
     assert isinstance(recovered, WorkerClaimRejected)
     assert recovered.message.redis_message_id == redis_message_id

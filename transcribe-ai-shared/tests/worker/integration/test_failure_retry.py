@@ -318,29 +318,25 @@ async def test_requeued_attempt_is_not_inferred_again_when_ack_crashes(
     assert pending_before_recovery["pending"] == 1
     assert pending_before_recovery["min"] == old_message_id
 
-    # Le seuil nul simule ici l'expiration Redis sans ralentir le test. En
-    # production, le récupérateur devra utiliser un délai d'inactivité réel.
-    auto_claimed = await worker_redis.streams.autoclaim(
-        JobType.FAST,
-        GROUP_NAME,
-        RECOVERY_WORKER_ID,
-        min_idle_milliseconds=0,
-    )
-    assert len(auto_claimed.messages) == 1
-    recovered_message = auto_claimed.messages[0]
-    assert recovered_message.redis_message_id == old_message_id
-
     recovery_runtime = make_runtime(
         streams=worker_redis.streams,
         session_factory=async_session_factory,
         transcriber=transcriber,
         worker_id=RECOVERY_WORKER_ID,
     )
-    recovered = await recovery_runtime.process_message(recovered_message)
+    # XAUTOCLAIM ne programme aucun retry : l'attempt PostgreSQL déjà
+    # incrémenté suffit à identifier puis supprimer cet ancien message.
+    recovered = await recovery_runtime.process_next_pending(
+        min_idle_milliseconds=0,
+    )
 
     assert isinstance(recovered, WorkerClaimRejected)
     assert recovered.removed_from_stream is True
     assert len(transcriber.calls) == 1
+    unchanged_job = await load_job(async_session_factory)
+    assert unchanged_job.status is JobStatus.QUEUED
+    assert unchanged_job.attempt_count == 1
+    assert unchanged_job.dispatch_required is True
     await assert_old_message_removed(worker_redis)
 
 

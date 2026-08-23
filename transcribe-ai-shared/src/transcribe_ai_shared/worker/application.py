@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from datetime import timedelta
+from time import monotonic as monotonic_clock
 from typing import NoReturn
 
 from transcribe_ai_shared.database.config import DatabaseSettings
@@ -10,7 +11,7 @@ from transcribe_ai_shared.queue.config import RedisSettings
 from transcribe_ai_shared.queue.redis_streams import RedisTranscriptionStreams
 from transcribe_ai_shared.worker.completion import TranscriptionCompletionService
 from transcribe_ai_shared.worker.failure import TranscriptionFailureService
-from transcribe_ai_shared.worker.models import WorkerProcessResult
+from transcribe_ai_shared.worker.models import WorkerIdle, WorkerProcessResult
 from transcribe_ai_shared.worker.postgresql import PostgresWorkerJobStore
 from transcribe_ai_shared.worker.protocols import Transcriber
 from transcribe_ai_shared.worker.runtime import WorkerRuntime
@@ -25,8 +26,9 @@ async def run_worker(
     transcriber: Transcriber,
     job_type: JobType,
     on_result: Callable[[WorkerProcessResult], None] | None = None,
+    monotonic: Callable[[], float] = monotonic_clock,
 ) -> NoReturn:
-    """Compose les adaptateurs communs puis consomme les nouveaux messages.
+    """Compose les adaptateurs puis alterne recovery pending et nouveaux messages.
 
     Le moteur PostgreSQL et le client Redis appartiennent à cette invocation :
     ils sont donc fermés ici, y compris lorsque le claim ou le transcriber
@@ -62,7 +64,22 @@ async def run_worker(
                 ),
             )
             await runtime.initialize()
+            next_autoclaim_at = monotonic()
             while True:
+                if monotonic() >= next_autoclaim_at:
+                    pending_result = await runtime.process_next_pending(
+                        min_idle_milliseconds=(
+                            worker_settings.worker_autoclaim_min_idle_milliseconds
+                        ),
+                    )
+                    next_autoclaim_at = (
+                        monotonic() + worker_settings.worker_autoclaim_interval_seconds
+                    )
+                    if not isinstance(pending_result, WorkerIdle):
+                        if on_result is not None:
+                            on_result(pending_result)
+                        continue
+
                 result = await runtime.process_next(
                     block_milliseconds=worker_settings.worker_block_milliseconds,
                 )

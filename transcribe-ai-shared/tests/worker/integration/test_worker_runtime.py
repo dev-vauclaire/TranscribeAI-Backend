@@ -20,8 +20,10 @@ from transcribe_ai_shared import (
     TranscriptionOutput,
     TranscriptionResult,
     TranscriptionStreams,
+    WorkerClaimDeferred,
     WorkerClaimRejected,
     WorkerCompleted,
+    WorkerIdle,
     WorkerJobStore,
     WorkerJobTypeMismatchError,
     WorkerRuntime,
@@ -161,6 +163,16 @@ class SynchronizedClaimStore:
             job_uuid,
             worker_id,
             lease_expires_at,
+            expected_attempt_count,
+        )
+
+    async def is_processing_attempt(
+        self,
+        job_uuid: UUID,
+        expected_attempt_count: int,
+    ) -> bool:
+        return await self._delegate.is_processing_attempt(
+            job_uuid,
             expected_attempt_count,
         )
 
@@ -352,3 +364,289 @@ async def test_job_from_another_type_is_not_processed_by_the_wrong_stream(
     pending = await worker_redis.client.xpending(FAST_STREAM, GROUP_NAME)
     assert pending["pending"] == 1
     assert pending["min"] == redis_message_id
+
+
+async def put_message_in_pending(
+    worker_redis: WorkerRedisContext,
+    *,
+    job_type: JobType,
+    consumer_name: str,
+    attempt_count: int = 0,
+) -> str:
+    await worker_redis.streams.ensure_consumer_group(job_type, GROUP_NAME)
+    redis_message_id = await worker_redis.streams.publish(
+        JobStreamMessage(
+            job_uuid=JOB_UUID,
+            job_type=job_type,
+            attempt_count=attempt_count,
+        )
+    )
+    received = await worker_redis.streams.consume(
+        job_type,
+        GROUP_NAME,
+        consumer_name,
+        block_milliseconds=100,
+    )
+    assert received is not None
+    assert received.redis_message_id == redis_message_id
+    return redis_message_id
+
+
+async def set_pending_idle(
+    worker_redis: WorkerRedisContext,
+    *,
+    stream_name: str,
+    consumer_name: str,
+    redis_message_id: str,
+    idle_milliseconds: int,
+) -> None:
+    claimed_ids = await worker_redis.client.xclaim(
+        stream_name,
+        GROUP_NAME,
+        consumer_name,
+        min_idle_time=0,
+        message_ids=[redis_message_id],
+        idle=idle_milliseconds,
+        justid=True,
+    )
+    assert claimed_ids == [redis_message_id]
+
+
+async def test_pending_message_is_reclaimed_only_after_the_configured_idle_time(
+    async_session_factory: async_sessionmaker[AsyncSession],
+    worker_redis: WorkerRedisContext,
+) -> None:
+    abandoned_consumer = "worker-fast-abandoned"
+    recovery_worker = "worker-fast-recovery"
+    min_idle_milliseconds = 24 * 60 * 60 * 1_000
+    redis_message_id = await put_message_in_pending(
+        worker_redis,
+        job_type=JobType.FAST,
+        consumer_name=abandoned_consumer,
+    )
+    transcriber = FakeTranscriber()
+    runtime = make_runtime(
+        streams=worker_redis.streams,
+        job_store=PostgresWorkerJobStore(
+            async_session_factory,
+            expected_job_type=JobType.FAST,
+        ),
+        transcriber=transcriber,
+        worker_id=recovery_worker,
+        session_factory=async_session_factory,
+    )
+
+    too_recent = await runtime.process_next_pending(
+        min_idle_milliseconds=min_idle_milliseconds,
+    )
+
+    assert too_recent == WorkerIdle()
+    assert (await worker_redis.client.xpending(FAST_STREAM, GROUP_NAME))["pending"] == 1
+    pending_entries = await worker_redis.client.xpending_range(
+        FAST_STREAM,
+        GROUP_NAME,
+        min="-",
+        max="+",
+        count=10,
+    )
+    assert len(pending_entries) == 1
+    assert pending_entries[0]["consumer"] == abandoned_consumer
+    await set_pending_idle(
+        worker_redis,
+        stream_name=FAST_STREAM,
+        consumer_name=abandoned_consumer,
+        redis_message_id=redis_message_id,
+        idle_milliseconds=min_idle_milliseconds + 1,
+    )
+
+    recovered = await runtime.process_next_pending(
+        min_idle_milliseconds=min_idle_milliseconds,
+    )
+
+    # Aucun job PostgreSQL ne correspond : le message est un orphelin nettoyable.
+    assert isinstance(recovered, WorkerClaimRejected)
+    assert recovered.message.redis_message_id == redis_message_id
+    assert recovered.removed_from_stream is True
+    assert transcriber.calls == ()
+    assert (await worker_redis.client.xpending(FAST_STREAM, GROUP_NAME))["pending"] == 0
+    assert await worker_redis.client.xrange(FAST_STREAM) == []
+
+
+@pytest.mark.parametrize(
+    "lease_expires_at",
+    [
+        NOW + timedelta(hours=1),
+        datetime(2000, 1, 1, tzinfo=UTC),
+    ],
+    ids=["valid-lease", "expired-lease-awaiting-dispatcher-recovery"],
+)
+async def test_reclaimed_processing_attempt_is_not_inferred_or_acknowledged(
+    async_session_factory: async_sessionmaker[AsyncSession],
+    worker_redis: WorkerRedisContext,
+    lease_expires_at: datetime,
+) -> None:
+    lease_owner = "worker-fast-original"
+    recovery_worker = "worker-fast-recovery"
+    async with async_transaction(async_session_factory) as session:
+        await JobRepository(session).add(
+            TranscriptionJob(
+                job_uuid=JOB_UUID,
+                status=JobStatus.PROCESSING,
+                job_type=JobType.FAST,
+                audio_uri=f"{JOB_UUID}/input.wav",
+                dispatch_required=False,
+                attempt_count=0,
+                lease_owner=lease_owner,
+                lease_expires_at=lease_expires_at,
+            )
+        )
+    redis_message_id = await put_message_in_pending(
+        worker_redis,
+        job_type=JobType.FAST,
+        consumer_name=lease_owner,
+    )
+    transcriber = FakeTranscriber()
+    runtime = make_runtime(
+        streams=worker_redis.streams,
+        job_store=PostgresWorkerJobStore(
+            async_session_factory,
+            expected_job_type=JobType.FAST,
+        ),
+        transcriber=transcriber,
+        worker_id=recovery_worker,
+        session_factory=async_session_factory,
+    )
+
+    recovered = await runtime.process_next_pending(min_idle_milliseconds=0)
+
+    assert isinstance(recovered, WorkerClaimDeferred)
+    assert recovered.message.redis_message_id == redis_message_id
+    assert transcriber.calls == ()
+    saved_job = await load_job(async_session_factory)
+    assert saved_job.status is JobStatus.PROCESSING
+    assert saved_job.attempt_count == 0
+    assert saved_job.lease_owner == lease_owner
+    assert saved_job.lease_expires_at == lease_expires_at
+    pending_entries = await worker_redis.client.xpending_range(
+        FAST_STREAM,
+        GROUP_NAME,
+        min="-",
+        max="+",
+        count=10,
+    )
+    assert len(pending_entries) == 1
+    assert pending_entries[0]["message_id"] == redis_message_id
+    assert pending_entries[0]["consumer"] == recovery_worker
+    assert await worker_redis.client.xrange(FAST_STREAM) != []
+
+
+async def test_reclaimed_failed_job_is_cleaned_without_inference(
+    async_session_factory: async_sessionmaker[AsyncSession],
+    worker_redis: WorkerRedisContext,
+) -> None:
+    abandoned_consumer = "worker-fast-abandoned"
+    async with async_transaction(async_session_factory) as session:
+        await JobRepository(session).add(
+            TranscriptionJob(
+                job_uuid=JOB_UUID,
+                status=JobStatus.FAILED,
+                job_type=JobType.FAST,
+                audio_uri=f"{JOB_UUID}/input.wav",
+                dispatch_required=False,
+                attempt_count=0,
+                last_error="PERMANENT_TRANSCRIPTION_FAILURE",
+                completed_at=NOW,
+            )
+        )
+    redis_message_id = await put_message_in_pending(
+        worker_redis,
+        job_type=JobType.FAST,
+        consumer_name=abandoned_consumer,
+    )
+    transcriber = FakeTranscriber()
+    runtime = make_runtime(
+        streams=worker_redis.streams,
+        job_store=PostgresWorkerJobStore(
+            async_session_factory,
+            expected_job_type=JobType.FAST,
+        ),
+        transcriber=transcriber,
+        worker_id="worker-fast-recovery",
+        session_factory=async_session_factory,
+    )
+
+    recovered = await runtime.process_next_pending(min_idle_milliseconds=0)
+
+    assert isinstance(recovered, WorkerClaimRejected)
+    assert recovered.message.redis_message_id == redis_message_id
+    assert recovered.removed_from_stream is True
+    assert transcriber.calls == ()
+    saved_job = await load_job(async_session_factory)
+    assert saved_job.status is JobStatus.FAILED
+    assert saved_job.attempt_count == 0
+    assert saved_job.last_error == "PERMANENT_TRANSCRIPTION_FAILURE"
+    assert (await worker_redis.client.xpending(FAST_STREAM, GROUP_NAME))["pending"] == 0
+    assert await worker_redis.client.xrange(FAST_STREAM) == []
+
+
+@pytest.mark.parametrize(
+    ("job_type", "stream_name", "abandoned_consumer", "recovery_worker"),
+    [
+        (
+            JobType.FAST,
+            FAST_STREAM,
+            "worker-fast-abandoned",
+            "worker-fast-recovery",
+        ),
+        (
+            JobType.BATCH,
+            BATCH_STREAM,
+            "worker-batch-abandoned",
+            "worker-batch-recovery",
+        ),
+    ],
+)
+async def test_reclaimed_queued_attempt_uses_the_normal_claim_path(
+    async_session_factory: async_sessionmaker[AsyncSession],
+    worker_redis: WorkerRedisContext,
+    job_type: JobType,
+    stream_name: str,
+    abandoned_consumer: str,
+    recovery_worker: str,
+) -> None:
+    await persist_job(async_session_factory, job_type=job_type)
+    redis_message_id = await put_message_in_pending(
+        worker_redis,
+        job_type=job_type,
+        consumer_name=abandoned_consumer,
+    )
+    output = TranscriptionOutput(result={"text": f"recovered {job_type.value}"})
+    transcriber = FakeTranscriber(output)
+    runtime = make_runtime(
+        streams=worker_redis.streams,
+        job_store=PostgresWorkerJobStore(
+            async_session_factory,
+            expected_job_type=job_type,
+        ),
+        transcriber=transcriber,
+        worker_id=recovery_worker,
+        session_factory=async_session_factory,
+        job_type=job_type,
+    )
+
+    recovered = await runtime.process_next_pending(min_idle_milliseconds=0)
+
+    assert isinstance(recovered, WorkerCompleted)
+    assert recovered.message.redis_message_id == redis_message_id
+    assert recovered.job.job_type is job_type
+    assert recovered.removed_from_stream is True
+    assert transcriber.calls == (AudioLocation(f"{JOB_UUID}/input.wav"),)
+    saved_job = await load_job(async_session_factory)
+    assert saved_job.status is JobStatus.COMPLETED
+    assert saved_job.attempt_count == 0
+    assert saved_job.lease_owner == recovery_worker
+    saved_result = await load_result(async_session_factory)
+    assert saved_result is not None
+    assert saved_result.result == output.result
+    assert (await worker_redis.client.xpending(stream_name, GROUP_NAME))["pending"] == 0
+    assert await worker_redis.client.xrange(stream_name) == []

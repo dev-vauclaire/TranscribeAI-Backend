@@ -74,7 +74,7 @@ class TranscriptionFailureResolution:
 
 @dataclass(frozen=True, slots=True)
 class WorkerIdle:
-    """Indique qu'aucun nouveau message Redis n'était disponible."""
+    """Indique qu'aucun message Redis n'était disponible."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +83,13 @@ class WorkerClaimRejected:
 
     message: ReceivedJobStreamMessage
     removed_from_stream: bool
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerClaimDeferred:
+    """Conserve un message reclaimé dont la tentative est encore en traitement."""
+
+    message: ReceivedJobStreamMessage
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +125,7 @@ class WorkerFailed:
 
 type WorkerProcessResult = (
     WorkerIdle
+    | WorkerClaimDeferred
     | WorkerClaimRejected
     | WorkerCompleted
     | WorkerRetryScheduled

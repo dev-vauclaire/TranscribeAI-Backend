@@ -93,6 +93,8 @@ les variables d'environnement suivantes :
 | `WorkerSettings` | `WORKER_ID` | oui | — |
 | `WorkerSettings` | `WORKER_CONSUMER_GROUP` | non | `transcription-workers` |
 | `WorkerSettings` | `WORKER_BLOCK_MILLISECONDS` | non | `5000` |
+| `WorkerSettings` | `WORKER_AUTOCLAIM_INTERVAL_SECONDS` | non | `60` |
+| `WorkerSettings` | `WORKER_AUTOCLAIM_MIN_IDLE_MILLISECONDS` | non | `300000` |
 | `WorkerSettings` | `WORKER_LEASE_SECONDS` | non | `300` |
 | `WorkerSettings` | `WORKER_HEARTBEAT_SECONDS` | non | `60` |
 | `WorkerSettings` | `MAX_ATTEMPTS` | non | `3` |
@@ -119,15 +121,23 @@ persisté dans `TranscriptionJob.audio_uri`.
   `KEEPREF` suppose un seul consumer group métier par stream, avec autant de
   consumers concurrents que nécessaire dans ce groupe.
 - `autoclaim` expose uniquement la primitive Redis et ne décide ni du retry
-  métier ni de la valeur de `TranscriptionJob.attempt_count`.
+  métier ni de la valeur de `TranscriptionJob.attempt_count`. Chaque worker
+  balaie immédiatement puis périodiquement le PEL de son propre stream, un
+  message à la fois. `WORKER_AUTOCLAIM_MIN_IDLE_MILLISECONDS` limite seulement
+  la fréquence de réattribution Redis : même pour un job BATCH très long,
+  l'idle Redis ne prouve jamais un crash. `COUNT 1` évite qu'un worker séquentiel
+  ne précharge plusieurs longues inférences ; en contrepartie, chaque worker ne
+  nettoie au maximum qu'un ancien message par intervalle configurable.
 - Le point de composition qui crée un `TranscriptionStreams` doit appeler
   `aclose()` lors de son arrêt afin de libérer le pool de connexions Redis.
 - `WorkerRuntime` orchestre une seule itération commune à FAST et BATCH :
-  consommation d'un message, claim PostgreSQL atomique, appel du `Transcriber`,
-  transition PostgreSQL terminale ou de retry, puis ACK Redis. `run_worker`
-  porte la boucle, la composition et la fermeture des ressources communes ;
-  chaque application choisit uniquement son `JobType` et son moteur. Le moteur
-  ML pourra ainsi rester chargé entre deux messages.
+  récupération éventuelle d'un ancien pending ou consommation d'un nouveau
+  message, décision PostgreSQL atomique, appel du `Transcriber`, transition
+  PostgreSQL terminale ou de retry, puis ACK Redis. `run_worker` porte la
+  boucle, la cadence monotone, la composition et la fermeture des ressources
+  communes ; chaque application choisit uniquement son `JobType` et son moteur.
+  Le balayage n'est pas concurrent de l'inférence, afin que le moteur ML garde
+  les ressources du worker pendant son exécution.
 - `PostgresWorkerJobStore` committe le claim dans une transaction courte avant
   de rendre un snapshot détaché au runtime. Aucune transaction PostgreSQL ne
   reste donc ouverte pendant le traitement audio. Il vérifie aussi, avant le
@@ -142,10 +152,16 @@ persisté dans `TranscriptionJob.audio_uri`.
   acquitté dans Redis. `WORKER_HEARTBEAT_SECONDS` doit être strictement
   inférieur à `WORKER_LEASE_SECONDS`.
 - Un claim refusé couvre aussi bien un UUID inexistant qu'un doublon ou un job
-  déjà traité : le runtime acquitte et supprime alors le message sans appeler
-  le transcriber. Le claim compare également l'`attempt_count` porté par Redis :
-  un message d'une ancienne tentative est donc supprimé sans relancer
-  l'inférence.
+  déjà traité. Un job terminal ou une ancienne tentative est acquitté et
+  supprimé sans appeler le transcriber. Lors d'un `XAUTOCLAIM`, un job
+  `PROCESSING` du bon type et de la tentative courante reste au contraire dans
+  le PEL : seul son lease PostgreSQL permet au dispatcher de décider
+  ultérieurement si le worker a probablement crashé. Les nouveaux doublons
+  conservent leur comportement antérieur d'ACK, puisque le message de la
+  tentative active reste déjà dans le PEL. Un UUID absent est acquitté et
+  supprimé, car le contrat de publication crée et committe toujours le job
+  PostgreSQL avant son message Redis. Le claim compare également
+  l'`attempt_count` porté par Redis.
 - `TranscriptionCompletionService` ajoute le résultat puis confirme par
   comparaison la tentative toujours détenue par le worker. Les deux écritures
   partagent une même session et un même commit ; un refus du CAS ou une erreur
@@ -173,10 +189,12 @@ persisté dans `TranscriptionJob.audio_uri`.
   nouvelle tentative. Une erreur SQL, un commit incertain ou un CAS refusé
   laisse l'ancien message dans la PEL ; aucune stratégie métier ne repose sur
   `XNACK`.
-- Un payload invalide reste dans la PEL. `WorkerRuntime.process_message()`
-  permet de traiter par le même chemin un message récupéré avec `XAUTOCLAIM`,
-  mais la politique de balayage automatique des messages pending reste hors de
-  ce runtime.
+- Un payload invalide reste dans la PEL et l'erreur de désérialisation est
+  propagée, qu'il provienne de `XREADGROUP` ou de `XAUTOCLAIM`. Le worker ne peut
+  pas l'acquitter aveuglément puisqu'il ne dispose pas d'une identité PostgreSQL
+  fiable ; une intervention opérateur reste nécessaire tant qu'une politique
+  dédiée de quarantaine n'existe pas. `WorkerRuntime.process_next_pending()`
+  porte le balayage unitaire et `run_worker` sa planification automatique.
 - `FakeTranscriber` est disponible uniquement depuis le module explicite
   `transcribe_ai_shared.worker.testing`. Les applications refusent de
   l'activer sans un opt-in d'environnement de développement.

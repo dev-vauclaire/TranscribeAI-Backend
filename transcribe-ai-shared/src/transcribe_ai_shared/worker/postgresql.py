@@ -5,7 +5,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from transcribe_ai_shared.database.models import TranscriptionJob
+from transcribe_ai_shared.database.models import JobStatus, TranscriptionJob
 from transcribe_ai_shared.database.models.enums import JobType
 from transcribe_ai_shared.database.repositories import JobRepository
 from transcribe_ai_shared.database.session import (
@@ -20,6 +20,8 @@ from transcribe_ai_shared.worker.protocols import WorkerJobStore
 
 
 class _WorkerJobRepository(Protocol):
+    async def get_by_uuid(self, job_uuid: UUID) -> TranscriptionJob | None: ...
+
     async def claim(
         self,
         job_uuid: UUID,
@@ -55,6 +57,26 @@ class PostgresWorkerJobStore(WorkerJobStore):
         self._session_factory = session_factory
         self._expected_job_type = expected_job_type
         self._repository_factory = repository_factory
+
+    async def is_processing_attempt(
+        self,
+        job_uuid: UUID,
+        expected_attempt_count: int,
+    ) -> bool:
+        """Reconnaît une tentative active sans interpréter son expiration.
+
+        Le dispatcher reste seul responsable de décider qu'un lease expiré
+        traduit un crash. Le worker utilise uniquement ce snapshot pour ne pas
+        relancer une inférence déjà marquée ``PROCESSING``.
+        """
+        async with self._session_factory() as session:
+            job = await self._repository_factory(session).get_by_uuid(job_uuid)
+            return (
+                job is not None
+                and job.job_type is self._expected_job_type
+                and job.status is JobStatus.PROCESSING
+                and job.attempt_count == expected_attempt_count
+            )
 
     async def claim(
         self,

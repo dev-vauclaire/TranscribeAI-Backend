@@ -19,6 +19,7 @@ from transcribe_ai_shared.worker.models import (
     ClaimedJob,
     ClassifiedTranscriptionFailure,
     TranscriptionOutput,
+    WorkerClaimDeferred,
     WorkerClaimRejected,
     WorkerCompleted,
     WorkerFailed,
@@ -85,6 +86,7 @@ class WorkerRuntime:
         self._heartbeat_interval = heartbeat_interval
         self._clock = clock
         self._sleep = sleep
+        self._autoclaim_start_id = "0-0"
 
     async def initialize(self) -> None:
         """Crée idempotemment le groupe du stream attribué à ce worker."""
@@ -110,11 +112,55 @@ class WorkerRuntime:
 
         return await self.process_message(message)
 
+    async def process_next_pending(
+        self,
+        *,
+        min_idle_milliseconds: int,
+    ) -> WorkerProcessResult:
+        """Récupère au plus un ancien pending sans décider d'un retry métier."""
+        claimed = await self._streams.autoclaim(
+            self._job_type,
+            self._group_name,
+            self._worker_id,
+            min_idle_milliseconds=min_idle_milliseconds,
+            start_id=self._autoclaim_start_id,
+            count=1,
+        )
+        self._autoclaim_start_id = claimed.next_start_id
+        if not claimed.messages:
+            return WorkerIdle()
+
+        return await self._process_message(
+            claimed.messages[0],
+            defer_processing_attempt=True,
+        )
+
     async def process_message(
         self,
         message: ReceivedJobStreamMessage,
     ) -> WorkerClaimRejected | WorkerCompleted | WorkerRetryScheduled | WorkerFailed:
-        """Traite un message nouveau ou récupéré en respectant COMMIT puis ACK."""
+        """Traite explicitement un message comme nouveau en respectant COMMIT puis ACK."""
+        result = await self._process_message(
+            message,
+            defer_processing_attempt=False,
+        )
+        if isinstance(result, WorkerClaimDeferred):
+            raise AssertionError("Un nouveau message ne peut pas être différé")
+        return result
+
+    async def _process_message(
+        self,
+        message: ReceivedJobStreamMessage,
+        *,
+        defer_processing_attempt: bool,
+    ) -> (
+        WorkerClaimDeferred
+        | WorkerClaimRejected
+        | WorkerCompleted
+        | WorkerRetryScheduled
+        | WorkerFailed
+    ):
+        """Traite un message selon sa provenance nouvelle ou pending."""
         if message.job_type is not self._job_type:
             raise WorkerJobTypeMismatchError(
                 message.job_uuid,
@@ -129,6 +175,11 @@ class WorkerRuntime:
             message.attempt_count,
         )
         if claimed_job is None:
+            if defer_processing_attempt and await self._job_store.is_processing_attempt(
+                message.job_uuid,
+                message.attempt_count,
+            ):
+                return WorkerClaimDeferred(message=message)
             removed = await self._streams.ack_and_delete(
                 self._group_name,
                 message,

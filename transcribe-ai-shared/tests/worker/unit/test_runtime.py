@@ -8,6 +8,7 @@ import pytest
 import transcribe_ai_shared.worker.runtime as runtime_module
 from transcribe_ai_shared import (
     AudioLocation,
+    AutoClaimResult,
     ClaimedJob,
     ClassifiedTranscriptionFailure,
     InvalidJobStreamMessageError,
@@ -25,6 +26,7 @@ from transcribe_ai_shared import (
     TranscriptionFailureTransitionError,
     TranscriptionOutput,
     TranscriptionStreams,
+    WorkerClaimDeferred,
     WorkerClaimRejected,
     WorkerCompleted,
     WorkerFailed,
@@ -74,14 +76,17 @@ class RecordingStreams:
         *,
         consume_error: Exception | None = None,
         ack_result: bool = True,
+        autoclaim_results: list[AutoClaimResult] | None = None,
         events: list[str] | None = None,
     ) -> None:
         self.message = message
         self.consume_error = consume_error
         self.ack_result = ack_result
+        self.autoclaim_results = list(autoclaim_results or [])
         self.events = events
         self.ensure_calls: list[tuple[JobType, str]] = []
         self.consume_calls: list[tuple[JobType, str, str, int | None]] = []
+        self.autoclaim_calls: list[tuple[JobType, str, str, int, str, int]] = []
         self.ack_calls: list[tuple[str, ReceivedJobStreamMessage]] = []
 
     async def ensure_consumer_group(
@@ -108,6 +113,36 @@ class RecordingStreams:
             raise self.consume_error
         return self.message
 
+    async def autoclaim(
+        self,
+        job_type: JobType,
+        group_name: str,
+        consumer_name: str,
+        *,
+        min_idle_milliseconds: int,
+        start_id: str = "0-0",
+        count: int = 1,
+    ) -> AutoClaimResult:
+        if self.events is not None:
+            self.events.append("autoclaim")
+        self.autoclaim_calls.append(
+            (
+                job_type,
+                group_name,
+                consumer_name,
+                min_idle_milliseconds,
+                start_id,
+                count,
+            )
+        )
+        if self.autoclaim_results:
+            return self.autoclaim_results.pop(0)
+        return AutoClaimResult(
+            next_start_id="0-0",
+            messages=(),
+            deleted_message_ids=(),
+        )
+
     async def ack_and_delete(
         self,
         group_name: str,
@@ -124,13 +159,16 @@ class RecordingJobStore:
         self,
         claimed_job: ClaimedJob | None,
         *,
+        processing_attempt: bool = False,
         renew_outcomes: list[bool | Exception] | None = None,
         events: list[str] | None = None,
     ) -> None:
         self.claimed_job = claimed_job
+        self.processing_attempt = processing_attempt
         self.renew_outcomes = list(renew_outcomes or [])
         self.events = events
         self.claim_calls: list[tuple[UUID, str, datetime, int]] = []
+        self.processing_attempt_calls: list[tuple[UUID, int]] = []
         self.renew_calls: list[tuple[UUID, str, datetime, int]] = []
         self.renewed = asyncio.Event()
 
@@ -152,6 +190,14 @@ class RecordingJobStore:
             )
         )
         return self.claimed_job
+
+    async def is_processing_attempt(
+        self,
+        job_uuid: UUID,
+        expected_attempt_count: int,
+    ) -> bool:
+        self.processing_attempt_calls.append((job_uuid, expected_attempt_count))
+        return self.processing_attempt
 
     async def renew_lease(
         self,
@@ -337,6 +383,159 @@ async def test_process_next_returns_idle_when_no_message_is_available() -> None:
     assert streams.ack_calls == []
 
 
+async def test_process_next_pending_keeps_the_autoclaim_cursor_without_message() -> (
+    None
+):
+    streams = RecordingStreams(
+        autoclaim_results=[
+            AutoClaimResult(
+                next_start_id="1755770400000-1",
+                messages=(),
+                deleted_message_ids=(),
+            ),
+            AutoClaimResult(
+                next_start_id="0-0",
+                messages=(),
+                deleted_message_ids=(),
+            ),
+        ]
+    )
+    store = RecordingJobStore(make_claimed_job())
+    runtime = make_runtime(streams, store, FakeTranscriber())
+
+    first_result = await runtime.process_next_pending(
+        min_idle_milliseconds=45_000,
+    )
+    second_result = await runtime.process_next_pending(
+        min_idle_milliseconds=45_000,
+    )
+
+    assert first_result == WorkerIdle()
+    assert second_result == WorkerIdle()
+    assert streams.autoclaim_calls == [
+        (JobType.FAST, GROUP_NAME, WORKER_ID, 45_000, "0-0", 1),
+        (
+            JobType.FAST,
+            GROUP_NAME,
+            WORKER_ID,
+            45_000,
+            "1755770400000-1",
+            1,
+        ),
+    ]
+    assert store.claim_calls == []
+    assert store.processing_attempt_calls == []
+    assert streams.ack_calls == []
+
+
+async def test_reclaimed_non_processing_attempt_is_cleaned() -> None:
+    message = make_message()
+    streams = RecordingStreams(
+        autoclaim_results=[
+            AutoClaimResult(
+                next_start_id="0-0",
+                messages=(message,),
+                deleted_message_ids=(),
+            )
+        ]
+    )
+    store = RecordingJobStore(None, processing_attempt=False)
+    transcriber = FakeTranscriber()
+
+    result = await make_runtime(
+        streams,
+        store,
+        transcriber,
+    ).process_next_pending(min_idle_milliseconds=30_000)
+
+    assert result == WorkerClaimRejected(message, removed_from_stream=True)
+    assert store.processing_attempt_calls == [(JOB_UUID, 2)]
+    assert transcriber.calls == ()
+    assert streams.ack_calls == [(GROUP_NAME, message)]
+
+
+async def test_reclaimed_processing_attempt_is_deferred_without_ack_or_inference() -> (
+    None
+):
+    message = make_message()
+    streams = RecordingStreams(
+        autoclaim_results=[
+            AutoClaimResult(
+                next_start_id="0-0",
+                messages=(message,),
+                deleted_message_ids=(),
+            )
+        ]
+    )
+    store = RecordingJobStore(None, processing_attempt=True)
+    transcriber = FakeTranscriber()
+    completer = RecordingCompleter()
+
+    result = await make_runtime(
+        streams,
+        store,
+        transcriber,
+        completer=completer,
+    ).process_next_pending(min_idle_milliseconds=30_000)
+
+    assert result == WorkerClaimDeferred(message)
+    assert store.processing_attempt_calls == [(JOB_UUID, 2)]
+    assert transcriber.calls == ()
+    assert completer.calls == []
+    assert streams.ack_calls == []
+
+
+async def test_reclaimed_queued_attempt_uses_the_normal_processing_path() -> None:
+    events: list[str] = []
+    message = make_message()
+    claimed_job = make_claimed_job()
+    streams = RecordingStreams(
+        autoclaim_results=[
+            AutoClaimResult(
+                next_start_id="0-0",
+                messages=(message,),
+                deleted_message_ids=(),
+            )
+        ],
+        events=events,
+    )
+    store = RecordingJobStore(claimed_job, events=events)
+    output = TranscriptionOutput(result={"text": "recovered"})
+    completer = RecordingCompleter(events=events)
+
+    class EventTranscriber:
+        async def transcribe(
+            self,
+            audio_location: AudioLocation,
+        ) -> TranscriptionOutput:
+            events.append("transcribe")
+            assert audio_location == claimed_job.audio_location
+            return output
+
+    result = await make_runtime(
+        streams,
+        store,
+        EventTranscriber(),
+        completer=completer,
+    ).process_next_pending(min_idle_milliseconds=30_000)
+
+    assert result == WorkerCompleted(
+        message,
+        claimed_job,
+        output,
+        removed_from_stream=True,
+    )
+    assert events == [
+        "autoclaim",
+        "claim",
+        "transcribe",
+        "renew_lease",
+        "complete",
+        "ack_and_delete",
+    ]
+    assert store.processing_attempt_calls == []
+
+
 async def test_valid_message_is_transcribed_completed_then_acked() -> None:
     events: list[str] = []
     message = make_message()
@@ -452,6 +651,7 @@ async def test_claim_refused_for_completed_job_is_acked_without_inference() -> N
     assert result == WorkerClaimRejected(message, removed_from_stream=True)
     assert transcriber.calls == ()
     assert completer.calls == []
+    assert store.processing_attempt_calls == []
     assert streams.ack_calls == [(GROUP_NAME, message)]
 
 

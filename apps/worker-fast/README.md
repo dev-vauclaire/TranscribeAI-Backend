@@ -1,16 +1,27 @@
 # Worker FAST
 
-Cette application consomme les nouveaux messages du stream
-`transcription:fast` un par un, tente leur claim PostgreSQL puis délègue le
-traitement au transcriber injecté. La boucle conserve les connexions et le
-transcriber entre deux messages. Pendant l'inférence, elle renouvelle le lease
-PostgreSQL selon `WORKER_HEARTBEAT_SECONDS`. Après une inférence réussie, le
-résultat et l'état `COMPLETED` sont committés ensemble avant l'ACK Redis. Elle ne
-contient aucune logique HTTP et n'implémente pas encore le moteur ML réel.
+Cette application consomme les nouveaux messages et récupère périodiquement les
+anciens pending du stream `transcription:fast`, un par un. Chaque message passe
+par la même décision PostgreSQL avant une éventuelle délégation au transcriber
+injecté. La boucle conserve les connexions et le transcriber entre deux
+messages. Pendant l'inférence, elle renouvelle le lease PostgreSQL selon
+`WORKER_HEARTBEAT_SECONDS`. Après une inférence réussie, le résultat et l'état
+`COMPLETED` sont committés ensemble avant l'ACK Redis. Elle ne contient aucune
+logique HTTP et n'implémente pas encore le moteur ML réel.
 
 Une erreur retryable réarme le job dans PostgreSQL avant de supprimer l'ancien
 message Redis. Une erreur permanente, ou une tentative ayant atteint
 `MAX_ATTEMPTS`, termine le job en `FAILED` sans nouvelle publication.
+
+Le premier balayage du Pending Entries List a lieu au démarrage, puis toutes les
+`WORKER_AUTOCLAIM_INTERVAL_SECONDS`. Seuls les messages inactifs depuis au moins
+`WORKER_AUTOCLAIM_MIN_IDLE_MILLISECONDS` sont réattribués. Ce délai Redis ne
+constitue jamais une preuve de crash : un job `PROCESSING` pour la tentative
+courante reste pending et seul son lease PostgreSQL gouverne sa recovery. Les
+jobs terminaux, les anciennes tentatives et les UUID absents sont nettoyés sans
+inférence. Un UUID absent est considéré comme obsolète, puisque le contrat de
+publication exige que le job PostgreSQL soit committé avant le message Redis.
+Le balayage reste séquentiel et ne concurrence pas l'inférence en cours.
 
 ## Exécution de développement
 

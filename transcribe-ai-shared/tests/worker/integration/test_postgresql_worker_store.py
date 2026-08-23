@@ -23,6 +23,9 @@ NOW = datetime(2099, 1, 1, 12, tzinfo=UTC)
 
 async def persist_processing_job(
     session_factory: async_sessionmaker[AsyncSession],
+    *,
+    lease_expires_at: datetime = NOW + timedelta(minutes=1),
+    attempt_count: int = 3,
 ) -> None:
     async with async_transaction(session_factory) as session:
         await JobRepository(session).add(
@@ -32,9 +35,9 @@ async def persist_processing_job(
                 job_type=JobType.FAST,
                 audio_uri=f"{JOB_UUID}/input.wav",
                 dispatch_required=False,
-                attempt_count=3,
+                attempt_count=attempt_count,
                 lease_owner=WORKER_ID,
-                lease_expires_at=NOW + timedelta(minutes=1),
+                lease_expires_at=lease_expires_at,
             )
         )
 
@@ -102,3 +105,82 @@ async def test_renew_lease_forwards_owner_and_attempt_guards(
     assert saved.lease_owner == WORKER_ID
     assert saved.attempt_count == 3
     assert saved.lease_expires_at == previous_expiration
+
+
+@pytest.mark.parametrize(
+    "lease_expires_at",
+    [
+        NOW + timedelta(minutes=1),
+        datetime(2000, 1, 1, tzinfo=UTC),
+    ],
+    ids=["future-lease", "expired-lease"],
+)
+async def test_is_processing_attempt_ignores_lease_expiration(
+    async_session_factory: async_sessionmaker[AsyncSession],
+    lease_expires_at: datetime,
+) -> None:
+    await persist_processing_job(
+        async_session_factory,
+        lease_expires_at=lease_expires_at,
+    )
+    store = PostgresWorkerJobStore(
+        async_session_factory,
+        expected_job_type=JobType.FAST,
+    )
+
+    is_processing = await store.is_processing_attempt(JOB_UUID, 3)
+
+    assert is_processing is True
+
+
+async def test_is_processing_attempt_rejects_another_attempt(
+    async_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await persist_processing_job(async_session_factory, attempt_count=4)
+    store = PostgresWorkerJobStore(
+        async_session_factory,
+        expected_job_type=JobType.FAST,
+    )
+
+    is_processing = await store.is_processing_attempt(JOB_UUID, 3)
+
+    assert is_processing is False
+
+
+@pytest.mark.parametrize("status", [JobStatus.COMPLETED, JobStatus.FAILED])
+async def test_is_processing_attempt_rejects_terminal_jobs(
+    async_session_factory: async_sessionmaker[AsyncSession],
+    status: JobStatus,
+) -> None:
+    async with async_transaction(async_session_factory) as session:
+        await JobRepository(session).add(
+            TranscriptionJob(
+                job_uuid=JOB_UUID,
+                status=status,
+                job_type=JobType.FAST,
+                audio_uri=f"{JOB_UUID}/input.wav",
+                dispatch_required=False,
+                attempt_count=3,
+            )
+        )
+    store = PostgresWorkerJobStore(
+        async_session_factory,
+        expected_job_type=JobType.FAST,
+    )
+
+    is_processing = await store.is_processing_attempt(JOB_UUID, 3)
+
+    assert is_processing is False
+
+
+async def test_is_processing_attempt_rejects_a_missing_job(
+    async_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    store = PostgresWorkerJobStore(
+        async_session_factory,
+        expected_job_type=JobType.FAST,
+    )
+
+    is_processing = await store.is_processing_attempt(JOB_UUID, 3)
+
+    assert is_processing is False

@@ -13,12 +13,16 @@ def isolate_worker_environment(monkeypatch):
         "WORKER_ID",
         "WORKER_CONSUMER_GROUP",
         "WORKER_BLOCK_MILLISECONDS",
+        "WORKER_AUTOCLAIM_INTERVAL_SECONDS",
+        "WORKER_AUTOCLAIM_MIN_IDLE_MILLISECONDS",
         "WORKER_LEASE_SECONDS",
         "WORKER_HEARTBEAT_SECONDS",
         "MAX_ATTEMPTS",
         "worker_id",
         "worker_consumer_group",
         "worker_block_milliseconds",
+        "worker_autoclaim_interval_seconds",
+        "worker_autoclaim_min_idle_milliseconds",
         "worker_lease_seconds",
         "worker_heartbeat_seconds",
         "max_attempts",
@@ -29,6 +33,8 @@ def isolate_worker_environment(monkeypatch):
 def test_worker_settings_accept_valid_configuration():
     settings = WorkerSettings(
         worker_id="worker-fast-1",
+        worker_autoclaim_interval_seconds=45,
+        worker_autoclaim_min_idle_milliseconds=180_000,
         worker_lease_seconds=120,
         worker_heartbeat_seconds=30,
         max_attempts=5,
@@ -38,6 +44,8 @@ def test_worker_settings_accept_valid_configuration():
     assert settings.worker_id == "worker-fast-1"
     assert settings.worker_consumer_group == "transcription-workers"
     assert settings.worker_block_milliseconds == 5_000
+    assert settings.worker_autoclaim_interval_seconds == 45
+    assert settings.worker_autoclaim_min_idle_milliseconds == 180_000
     assert settings.worker_lease_seconds == 120
     assert settings.worker_heartbeat_seconds == 30
     assert settings.max_attempts == 5
@@ -59,6 +67,8 @@ def test_worker_settings_require_worker_id():
         ("worker_consumer_group", "   ", "string_too_short"),
         ("worker_block_milliseconds", 0, "greater_than"),
         ("worker_block_milliseconds", 10_000, "less_than"),
+        ("worker_autoclaim_interval_seconds", 0, "greater_than"),
+        ("worker_autoclaim_min_idle_milliseconds", 0, "greater_than"),
         ("worker_lease_seconds", 0, "greater_than"),
         ("worker_heartbeat_seconds", 0, "greater_than"),
         ("max_attempts", 0, "greater_than_equal"),
@@ -104,12 +114,16 @@ def test_worker_settings_use_defaults():
     assert settings.max_attempts == 3
     assert settings.worker_consumer_group == "transcription-workers"
     assert settings.worker_block_milliseconds == 5_000
+    assert settings.worker_autoclaim_interval_seconds == 60
+    assert settings.worker_autoclaim_min_idle_milliseconds == 300_000
 
 
 def test_worker_settings_read_environment(monkeypatch):
     monkeypatch.setenv("WORKER_ID", "worker-from-environment")
     monkeypatch.setenv("WORKER_CONSUMER_GROUP", "custom-workers")
     monkeypatch.setenv("WORKER_BLOCK_MILLISECONDS", "750")
+    monkeypatch.setenv("WORKER_AUTOCLAIM_INTERVAL_SECONDS", "45")
+    monkeypatch.setenv("WORKER_AUTOCLAIM_MIN_IDLE_MILLISECONDS", "180000")
     monkeypatch.setenv("WORKER_LEASE_SECONDS", "600")
     monkeypatch.setenv("WORKER_HEARTBEAT_SECONDS", "120")
     monkeypatch.setenv("MAX_ATTEMPTS", "7")
@@ -119,6 +133,8 @@ def test_worker_settings_read_environment(monkeypatch):
     assert settings.worker_id == "worker-from-environment"
     assert settings.worker_consumer_group == "custom-workers"
     assert settings.worker_block_milliseconds == 750
+    assert settings.worker_autoclaim_interval_seconds == 45
+    assert settings.worker_autoclaim_min_idle_milliseconds == 180_000
     assert settings.worker_lease_seconds == 600
     assert settings.worker_heartbeat_seconds == 120
     assert settings.max_attempts == 7
