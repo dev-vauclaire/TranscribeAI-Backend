@@ -98,6 +98,19 @@ La commande retourne :
   échoue, ou lors d'un échec global ;
 - `130` lorsque le processus est interrompu.
 
+## Supervision
+
+Le dispatcher est un processus one-shot et non un service permanent. Son
+healthcheck est donc le statut de chaque exécution fourni au cron, au CronJob ou
+à l'orchestrateur : une exécution réussie retourne `0` et une exécution en
+échec retourne un code non nul. Ajouter un serveur HTTP ou un `HEALTHCHECK`
+Docker au conteneur serait inadapté, puisque le processus doit normalement se
+terminer après chaque cycle.
+
+La supervision doit également alerter lorsqu'aucune exécution n'a été observée
+pendant la période attendue ; cette vérification appartient à l'infrastructure
+qui planifie les cycles.
+
 ## Configuration
 
 | Variable | Obligatoire | Défaut | Description |

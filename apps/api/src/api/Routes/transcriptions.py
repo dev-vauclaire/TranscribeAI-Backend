@@ -98,7 +98,9 @@ async def post_transcription(
             "description": "L'identifiant fourni n'est pas un UUID valide."
         },
         status.HTTP_500_INTERNAL_SERVER_ERROR: {
-            "description": "PostgreSQL ou le résultat durable est indisponible."
+            "description": (
+                "PostgreSQL est indisponible ou le résultat durable attendu est absent."
+            )
         },
     },
 )

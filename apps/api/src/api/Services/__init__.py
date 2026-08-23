@@ -8,10 +8,12 @@ from api.Services.get_transcription import (
     GetTranscriptionResult,
     GetTranscriptionService,
 )
+from api.Services.health import PostgresReadinessService
 
 __all__ = [
     "CreateTranscriptionResult",
     "CreateTranscriptionService",
     "GetTranscriptionResult",
     "GetTranscriptionService",
+    "PostgresReadinessService",
 ]

@@ -125,7 +125,14 @@ async def test_reconcile_batch_continues_after_an_individual_error(
         (third_job, 90),
     ]
     assert result == ReconciliationBatchResult(3, 1, 1, 1)
-    assert "RuntimeError" in caplog.text
+    error_record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "reconciliation"
+        and getattr(record, "action", None) == "failed"
+    )
+    assert error_record.error_type == "RuntimeError"
+    assert error_record.job_uuid == str(FIRST_JOB_UUID)
     assert "secret" not in caplog.text
 
 

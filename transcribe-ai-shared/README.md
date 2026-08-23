@@ -10,6 +10,8 @@ Ce package fournit les composants communs aux applications du backend.
 - `storage` : contrat de stockage audio et implémentation sur système de
   fichiers ;
 - `worker` : runtime, contrats et composition communs aux processus workers.
+- `worker_healthcheck.py` : sonde exécutable des dépendances indispensables aux
+  workers, sans serveur HTTP.
 
 Les éléments supportés sont réexportés depuis `transcribe_ai_shared` et depuis le
 sous-package auquel ils appartiennent.
@@ -112,10 +114,59 @@ les variables d'environnement suivantes :
 Le package ne charge pas implicitement de fichier `.env` : le point d'entrée de
 chaque application reste responsable de fournir son environnement.
 
+## Journalisation structurée
+
+Les applications configurent `transcribe_ai_shared.observability` à leur point
+d'entrée. Une ligne applicative est un objet JSON contenant au minimum
+`timestamp`, `level`, `logger`, `service` et `event`. Les corrélations
+`job_uuid`, `attempt_count`, `worker_id` et `redis_message_id` sont ajoutées
+uniquement lorsqu'elles existent au point du flow concerné.
+
+Le helper applique une liste positive de champs techniques. Il ignore les
+champs hors contrat et le formatter ne rend ni message arbitraire ni détail
+d'exception. Un appel ne doit jamais lui transmettre l'audio, le résultat ou le
+texte de transcription, un payload Redis/HTTP, une URL de connexion, un token
+ou toute autre donnée sensible. Une erreur est identifiée par son seul
+`error_type` et, lorsqu'il existe, par un code applicatif non sensible.
+
+Le catalogue applicatif reste volontairement court :
+
+- Création API : `job_created`, après persistance PostgreSQL confirmée.
+- Dispatch : `dispatch_started`, `redis_published`, `dispatched` et
+  `dispatch_failed`. `dispatched` suit la confirmation PostgreSQL.
+- Worker : `job_claimed`, `claim_rejected`, `transcription_started` et
+  `heartbeat_lost`, après le claim ou le CAS de lease concerné.
+- Finalisation : `retry_scheduled`, `job_completed`, `job_failed` et
+  `redis_message_acked`, après le commit de la transition PostgreSQL.
+- Tâches one-shot : `reconciliation`, `lease_recovery`, `cleanup` et
+  `migration`. Le champ `action` précise la décision ou le résumé.
+
+`configure_logging` remplace les handlers du logger racine au démarrage afin
+de garantir ce contrat dans les conteneurs actuels. Une future intégration
+OpenTelemetry ou Sentry devra donc être composée explicitement avec ce helper,
+et non installée implicitement avant le point d'entrée.
+
 En production avec un volume Docker partagé, `AUDIO_STORAGE_PATH` doit pointer
 vers `/data/transcriptions`. La racine reste injectable afin que les tests
 puissent utiliser un dossier temporaire et qu'aucun chemin physique ne soit
 persisté dans `TranscriptionJob.audio_uri`.
+
+## Healthcheck des workers
+
+La commande `worker-healthcheck` exécute un `SELECT 1` sur PostgreSQL puis un
+`PING` Redis. Ces deux services sont indispensables à la consommation et à la
+finalisation d'un job par un worker. La sonde possède un timeout global de cinq
+secondes, referme toujours son client Redis et son moteur SQLAlchemy, puis
+retourne `0` en cas de succès ou `1` en cas d'échec.
+
+Seul le type de l'erreur est journalisé : les URL de connexion et leurs secrets
+ne sont jamais inclus dans la sortie. Cette commande est destinée au mécanisme
+`HEALTHCHECK` des images worker et ne démarre aucun serveur HTTP. Elle ne doit
+pas être utilisée comme liveness probe dépendante de services externes dans un
+futur déploiement Kubernetes ; elle vérifie uniquement la disponibilité des
+dépendances. Elle ne vérifie ni le chargement du moteur ML ni la progression de
+la boucle worker : ces signaux devront être exposés séparément si le déploiement
+a besoin d'une readiness applicative complète.
 
 ## Services
 

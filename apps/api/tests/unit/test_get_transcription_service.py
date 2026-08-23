@@ -6,7 +6,11 @@ from uuid import UUID
 import pytest
 
 from api.Services.get_transcription import GetTranscriptionService
-from api.exceptions import TranscriptionNotFoundError, TranscriptionQueryError
+from api.exceptions import (
+    TranscriptionNotFoundError,
+    TranscriptionQueryError,
+    TranscriptionResultNotFoundError,
+)
 from transcribe_ai_shared import (
     JobRepository,
     JobStatus,
@@ -184,7 +188,7 @@ async def test_get_rejects_completed_job_without_durable_result() -> None:
         transcription_result=None,
     )
 
-    with pytest.raises(TranscriptionQueryError):
+    with pytest.raises(TranscriptionResultNotFoundError):
         await harness.service.get(JOB_UUID)
 
     harness.result_repository.get_by_job_uuid.assert_awaited_once_with(JOB_UUID)

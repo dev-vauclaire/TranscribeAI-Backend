@@ -95,5 +95,9 @@ class TranscriptionNotFoundError(Exception):
     """Le job demandé n'existe pas dans PostgreSQL."""
 
 
+class TranscriptionResultNotFoundError(Exception):
+    """Un job terminé ne possède pas le résultat durable attendu."""
+
+
 class TranscriptionQueryError(Exception):
     """Le statut ou le résultat n'a pas pu être consulté de façon fiable."""

@@ -7,13 +7,18 @@ from api.Services.protocols import (
     JobReadRepositoryFactory,
     ResultRepositoryFactory,
 )
-from api.exceptions import TranscriptionNotFoundError, TranscriptionQueryError
+from api.exceptions import (
+    TranscriptionNotFoundError,
+    TranscriptionQueryError,
+    TranscriptionResultNotFoundError,
+)
 from transcribe_ai_shared import (
     AsyncSessionFactory,
     JobRepository,
     JobStatus,
     ResultRepository,
 )
+from transcribe_ai_shared.observability import log_event
 
 
 logger = logging.getLogger(__name__)
@@ -60,11 +65,17 @@ class GetTranscriptionService:
                         job_uuid
                     )
                     if transcription_result is None:
-                        logger.error(
-                            "Le job COMPLETED %s ne possède aucun résultat.",
-                            job_uuid,
+                        log_event(
+                            logger,
+                            logging.ERROR,
+                            service="api",
+                            event="transcription_result_missing",
+                            job_uuid=job_uuid,
+                            attempt_count=job.attempt_count,
+                            job_type=job.job_type,
+                            status=job.status,
                         )
-                        raise TranscriptionQueryError(
+                        raise TranscriptionResultNotFoundError(
                             "Le résultat durable de la transcription est absent."
                         )
                     result_payload = dict(transcription_result.result)
@@ -74,12 +85,21 @@ class GetTranscriptionService:
                     status=job.status,
                     result=result_payload,
                 )
-        except (TranscriptionNotFoundError, TranscriptionQueryError):
+        except (
+            TranscriptionNotFoundError,
+            TranscriptionQueryError,
+            TranscriptionResultNotFoundError,
+        ):
             raise
         except Exception as error:
-            logger.exception(
-                "Impossible de consulter la transcription %s.",
-                job_uuid,
+            log_event(
+                logger,
+                logging.ERROR,
+                service="api",
+                event="transcription_query_failed",
+                job_uuid=job_uuid,
+                dependency="postgresql",
+                error_type=type(error).__name__,
             )
             raise TranscriptionQueryError(
                 "La transcription n'a pas pu être consultée."

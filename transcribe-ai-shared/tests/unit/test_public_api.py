@@ -66,6 +66,7 @@ from transcribe_ai_shared import (
     WorkerSettings,
     async_transaction,
     check_postgres_connection,
+    check_worker_dependencies,
     classify_transcription_failure,
     create_async_db_engine,
     create_async_session_factory,
@@ -146,6 +147,7 @@ def test_supported_public_imports_are_available():
     assert WorkerSettings is not None
     assert async_transaction is not None
     assert check_postgres_connection is not None
+    assert check_worker_dependencies is not None
     assert classify_transcription_failure is not None
     assert create_async_db_engine is not None
     assert create_async_session_factory is not None

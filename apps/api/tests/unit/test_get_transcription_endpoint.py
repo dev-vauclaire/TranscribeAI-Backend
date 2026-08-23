@@ -9,7 +9,11 @@ import pytest
 from api.Services.get_transcription import GetTranscriptionResult
 from api.config import ApiSettings
 from api.create_app import create_app
-from api.exceptions import TranscriptionNotFoundError, TranscriptionQueryError
+from api.exceptions import (
+    TranscriptionNotFoundError,
+    TranscriptionQueryError,
+    TranscriptionResultNotFoundError,
+)
 from transcribe_ai_shared import JobStatus
 
 
@@ -55,6 +59,7 @@ def build_app(service: RecordingGetTranscriptionService) -> FastAPI:
         settings=TEST_SETTINGS,
         transcription_service=object(),  # type: ignore[arg-type]
         transcription_query_service=service,  # type: ignore[arg-type]
+        readiness_service=object(),  # type: ignore[arg-type]
     )
 
 
@@ -151,6 +156,22 @@ async def test_get_transcription_returns_500_without_exposing_database_error() -
         "detail": "Le statut de la transcription est temporairement indisponible."
     }
     assert "password" not in response.text
+    assert service.calls == [JOB_UUID]
+
+
+async def test_get_transcription_returns_distinct_500_when_result_is_missing() -> None:
+    service = RecordingGetTranscriptionService(
+        error=TranscriptionResultNotFoundError(
+            "Le résultat durable de la transcription est absent."
+        ),
+    )
+
+    response = await get_transcription(build_app(service), str(JOB_UUID))
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": "Le résultat de la transcription est indisponible."
+    }
     assert service.calls == [JOB_UUID]
 
 

@@ -14,6 +14,11 @@ from dispatcher.models import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def preserve_pytest_logging(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(main_module, "configure_logging", lambda service: None)
+
+
 def make_result(
     *,
     recovery_stale_count: int = 0,
@@ -60,13 +65,15 @@ def test_main_logs_summary_and_returns_zero_when_batch_succeeds(
         exit_code = main_module.main()
 
     assert exit_code == 0
-    assert "lease_recovery_summary" in caplog.text
-    assert "requeued=1" in caplog.text
-    assert "dispatch_reconciliation_summary" in caplog.text
-    assert "rearmed=1" in caplog.text
-    assert "dispatch_batch_summary" in caplog.text
-    assert "selected=1" in caplog.text
-    assert "confirmed=1" in caplog.text
+    summaries = {
+        record.event: record
+        for record in caplog.records
+        if getattr(record, "action", None) == "summary"
+    }
+    assert summaries["lease_recovery"].requeued_count == 1
+    assert summaries["reconciliation"].rearmed_count == 1
+    assert summaries["dispatch"].selected_count == 1
+    assert summaries["dispatch"].confirmed_count == 1
 
 
 def test_main_returns_zero_for_a_stale_confirmation(
@@ -127,7 +134,10 @@ def test_main_returns_one_without_logging_exception_details(
         exit_code = main_module.main()
 
     assert exit_code == 1
-    assert "error_type=RuntimeError" in caplog.text
+    record = caplog.records[-1]
+    assert record.event == "dispatcher_cycle"
+    assert record.action == "failed"
+    assert record.error_type == "RuntimeError"
     assert "redis://secret" not in caplog.text
 
 

@@ -12,6 +12,15 @@ from worker_long_form_diarization.config import WorkerLongFormDiarizationSetting
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def preserve_test_logging_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Mock:
+    configure_logging = Mock()
+    monkeypatch.setattr(main_module, "configure_logging", configure_logging)
+    return configure_logging
+
+
 def test_create_transcriber_delegates_whisperx_composition_lazily(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -46,6 +55,7 @@ def test_create_transcriber_allows_fake_only_with_development_opt_in() -> None:
 def test_main_returns_one_if_the_long_running_worker_stops_unexpectedly(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    preserve_test_logging_configuration: Mock,
 ) -> None:
     async def stopped_process() -> None:
         return None
@@ -56,7 +66,10 @@ def test_main_returns_one_if_the_long_running_worker_stops_unexpectedly(
         exit_code = main_module.main()
 
     assert exit_code == 1
-    assert "worker_long_form_diarization_stopped_unexpectedly" in caplog.text
+    preserve_test_logging_configuration.assert_called_once_with(
+        service="worker-long-form-diarization"
+    )
+    assert "worker_stopped_unexpectedly" in caplog.text
 
 
 def test_main_returns_one_without_logging_exception_details(
@@ -72,7 +85,12 @@ def test_main_returns_one_without_logging_exception_details(
         exit_code = main_module.main()
 
     assert exit_code == 1
-    assert "error_type=RuntimeError" in caplog.text
+    record = caplog.records[-1]
+    assert record.event == "worker_process_failed"  # type: ignore[attr-defined]
+    assert record.service == (  # type: ignore[attr-defined]
+        "worker-long-form-diarization"
+    )
+    assert record.error_type == "RuntimeError"  # type: ignore[attr-defined]
     assert "postgresql://secret" not in caplog.text
 
 

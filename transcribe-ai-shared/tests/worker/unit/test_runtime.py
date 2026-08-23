@@ -51,19 +51,23 @@ GROUP_NAME = "transcription-workers"
 WORKER_ID = "worker-fast-1"
 
 
-def make_message() -> ReceivedJobStreamMessage:
+def make_message(
+    job_type: JobType = JobType.FAST,
+) -> ReceivedJobStreamMessage:
     return ReceivedJobStreamMessage(
         redis_message_id=REDIS_MESSAGE_ID,
         job_uuid=JOB_UUID,
-        job_type=JobType.FAST,
+        job_type=job_type,
         attempt_count=2,
     )
 
 
-def make_claimed_job() -> ClaimedJob:
+def make_claimed_job(
+    job_type: JobType = JobType.FAST,
+) -> ClaimedJob:
     return ClaimedJob(
         job_uuid=JOB_UUID,
-        job_type=JobType.FAST,
+        job_type=job_type,
         attempt_count=2,
         audio_location=AudioLocation(f"{JOB_UUID}/input.wav"),
     )
@@ -328,6 +332,7 @@ def make_runtime(
     completer: TranscriptionCompleter | None = None,
     failure_handler: TranscriptionFailureHandler | None = None,
     heartbeat_interval: timedelta = timedelta(minutes=1),
+    job_type: JobType = JobType.FAST,
     clock=lambda: NOW,
     sleep=asyncio.sleep,
 ) -> WorkerRuntime:
@@ -337,7 +342,7 @@ def make_runtime(
         transcriber=transcriber,
         completer=completer or RecordingCompleter(),
         failure_handler=failure_handler or RecordingFailureHandler(),
-        job_type=JobType.FAST,
+        job_type=job_type,
         group_name=GROUP_NAME,
         worker_id=WORKER_ID,
         lease_duration=LEASE_DURATION,
@@ -345,6 +350,22 @@ def make_runtime(
         clock=clock,
         sleep=sleep,
     )
+
+
+def record_log_events(
+    monkeypatch: pytest.MonkeyPatch,
+    timeline: list[str] | None = None,
+) -> list[tuple[int, dict[str, object]]]:
+    """Capture le contrat structuré sans dépendre du formatter JSON."""
+    records: list[tuple[int, dict[str, object]]] = []
+
+    def record_event(_logger, level: int, **context: object) -> None:
+        records.append((level, context))
+        if timeline is not None:
+            timeline.append(f"log:{context['event']}")
+
+    monkeypatch.setattr(runtime_module, "log_event", record_event)
+    return records
 
 
 async def test_initialize_creates_the_group_for_the_configured_stream() -> None:
@@ -536,10 +557,25 @@ async def test_reclaimed_queued_attempt_uses_the_normal_processing_path() -> Non
     assert store.processing_attempt_calls == []
 
 
-async def test_valid_message_is_transcribed_completed_then_acked() -> None:
+@pytest.mark.parametrize(
+    ("job_type", "expected_service"),
+    [
+        (JobType.FAST, "worker-fast"),
+        (
+            JobType.LONG_FORM_DIARIZATION,
+            "worker-long-form-diarization",
+        ),
+    ],
+)
+async def test_valid_message_is_transcribed_completed_then_acked(
+    monkeypatch: pytest.MonkeyPatch,
+    job_type: JobType,
+    expected_service: str,
+) -> None:
     events: list[str] = []
-    message = make_message()
-    claimed_job = make_claimed_job()
+    records = record_log_events(monkeypatch, events)
+    message = make_message(job_type)
+    claimed_job = make_claimed_job(job_type)
     streams = RecordingStreams(message, events=events)
     store = RecordingJobStore(claimed_job, events=events)
     output = TranscriptionOutput(result={"text": "hello"})
@@ -559,6 +595,7 @@ async def test_valid_message_is_transcribed_completed_then_acked() -> None:
         store,
         EventTranscriber(),
         completer=completer,
+        job_type=job_type,
     ).process_next()
 
     assert result == WorkerCompleted(
@@ -570,11 +607,29 @@ async def test_valid_message_is_transcribed_completed_then_acked() -> None:
     assert events == [
         "consume",
         "claim",
+        "log:job_claimed",
+        "log:transcription_started",
         "transcribe",
         "renew_lease",
         "complete",
+        "log:job_completed",
         "ack_and_delete",
+        "log:redis_message_acked",
     ]
+    assert [context["event"] for _, context in records] == [
+        "job_claimed",
+        "transcription_started",
+        "job_completed",
+        "redis_message_acked",
+    ]
+    for _, context in records:
+        assert context["service"] == expected_service
+        assert context["job_uuid"] == JOB_UUID
+        assert context["attempt_count"] == 2
+        assert context["worker_id"] == WORKER_ID
+        assert context["redis_message_id"] == REDIS_MESSAGE_ID
+        assert "output" not in context
+        assert "result" not in context
     assert store.claim_calls == [
         (JOB_UUID, WORKER_ID, NOW + LEASE_DURATION, 2),
     ]
@@ -1055,7 +1110,10 @@ async def test_repeated_external_cancellation_drains_both_worker_children() -> N
     assert streams.ack_calls == []
 
 
-async def test_final_lease_renewal_rejects_completion_when_lease_was_lost() -> None:
+async def test_final_lease_renewal_rejects_completion_when_lease_was_lost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = record_log_events(monkeypatch)
     controlled_sleep = ControlledSleep()
     transcriber = BlockingTranscriber()
     store = RecordingJobStore(
@@ -1090,6 +1148,7 @@ async def test_final_lease_renewal_rejects_completion_when_lease_was_lost() -> N
     ]
     assert completer.calls == []
     assert streams.ack_calls == []
+    assert "heartbeat_lost" in [context["event"] for _, context in records]
 
 
 async def test_final_lease_renewal_error_preserves_cause_without_completion() -> None:

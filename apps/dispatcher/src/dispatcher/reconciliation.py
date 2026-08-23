@@ -2,9 +2,11 @@ import logging
 
 from dispatcher.models import ReconciliationBatchResult
 from dispatcher.protocols import DispatchReconciliationStore
+from transcribe_ai_shared.observability import log_event
 
 
 LOGGER = logging.getLogger(__name__)
+SERVICE = "dispatcher"
 
 
 class DispatchReconciliationService:
@@ -36,28 +38,40 @@ class DispatchReconciliationService:
                 )
             except Exception as error:
                 error_count += 1
-                LOGGER.warning(
-                    "dispatcher_reconciliation_error job_uuid=%s "
-                    "attempt_count=%s error_type=%s",
-                    job.job_uuid,
-                    job.attempt_count,
-                    type(error).__name__,
+                log_event(
+                    LOGGER,
+                    logging.WARNING,
+                    service=SERVICE,
+                    event="reconciliation",
+                    job_uuid=job.job_uuid,
+                    attempt_count=job.attempt_count,
+                    action="failed",
+                    dependency="postgresql",
+                    error_type=type(error).__name__,
                 )
                 continue
 
             if rearmed:
                 rearmed_count += 1
-                LOGGER.debug(
-                    "dispatcher_reconciliation_rearmed job_uuid=%s attempt_count=%s",
-                    job.job_uuid,
-                    job.attempt_count,
+                log_event(
+                    LOGGER,
+                    logging.INFO,
+                    service=SERVICE,
+                    event="reconciliation",
+                    job_uuid=job.job_uuid,
+                    attempt_count=job.attempt_count,
+                    action="rearmed",
                 )
             else:
                 stale_count += 1
-                LOGGER.info(
-                    "dispatcher_reconciliation_stale job_uuid=%s attempt_count=%s",
-                    job.job_uuid,
-                    job.attempt_count,
+                log_event(
+                    LOGGER,
+                    logging.INFO,
+                    service=SERVICE,
+                    event="reconciliation",
+                    job_uuid=job.job_uuid,
+                    attempt_count=job.attempt_count,
+                    action="stale",
                 )
 
         return ReconciliationBatchResult(

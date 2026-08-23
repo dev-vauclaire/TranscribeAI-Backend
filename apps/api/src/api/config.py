@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 DEFAULT_MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024
 DEFAULT_FAST_MAX_DURATION_SECONDS = Decimal("900")
 DEFAULT_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS = Decimal("14400")
+DEFAULT_READINESS_TIMEOUT_SECONDS = 2.0
 
 
 class ApiSettings(BaseSettings):
@@ -34,6 +35,12 @@ class ApiSettings(BaseSettings):
         gt=0,
         allow_inf_nan=False,
         validation_alias="FFPROBE_TIMEOUT_SECONDS",
+    )
+    readiness_timeout_seconds: float = Field(
+        default=DEFAULT_READINESS_TIMEOUT_SECONDS,
+        gt=0,
+        allow_inf_nan=False,
+        validation_alias="API_READINESS_TIMEOUT_SECONDS",
     )
     fast_max_duration_seconds: Decimal = Field(
         default=DEFAULT_FAST_MAX_DURATION_SECONDS,

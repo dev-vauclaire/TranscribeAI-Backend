@@ -82,6 +82,7 @@ from transcribe_ai_shared.worker import (
     classify_transcription_failure,
     run_worker,
 )
+from transcribe_ai_shared.worker_healthcheck import check_worker_dependencies
 
 __all__ = [
     "AudioAlreadyExistsError",
@@ -150,6 +151,7 @@ __all__ = [
     "WorkerSettings",
     "async_transaction",
     "check_postgres_connection",
+    "check_worker_dependencies",
     "classify_transcription_failure",
     "create_async_db_engine",
     "create_async_session_factory",

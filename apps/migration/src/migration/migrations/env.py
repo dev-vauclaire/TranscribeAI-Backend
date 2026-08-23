@@ -8,7 +8,9 @@ from transcribe_ai_shared.database import Base, DatabaseSettings
 
 config = context.config
 
-if config.config_file_name is not None:
+if config.config_file_name is not None and config.attributes.get(
+    "configure_logger", True
+):
     # Les migrations sont aussi invoquées dans le processus pytest par les
     # intégrations applicatives : ne pas désactiver leurs loggers existants.
     fileConfig(config.config_file_name, disable_existing_loggers=False)

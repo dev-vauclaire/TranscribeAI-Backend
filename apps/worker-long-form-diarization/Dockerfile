@@ -65,4 +65,7 @@ COPY --from=builder /opt/worker-long-form-diarization/.venv \
 
 USER 10001:10001
 
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD ["/opt/worker-long-form-diarization/.venv/bin/worker-healthcheck"]
+
 ENTRYPOINT ["/opt/worker-long-form-diarization/.venv/bin/worker-long-form-diarization"]

@@ -2,6 +2,7 @@ import logging
 
 from dispatcher.models import RecoveryBatchResult
 from dispatcher.protocols import ExpiredJobStore
+from transcribe_ai_shared.observability import log_event
 from transcribe_ai_shared.retry_policy import (
     can_schedule_next_attempt,
     validate_max_attempts,
@@ -9,6 +10,7 @@ from transcribe_ai_shared.retry_policy import (
 
 
 LOGGER = logging.getLogger(__name__)
+SERVICE = "dispatcher"
 
 
 class LeaseRecoveryService:
@@ -46,35 +48,53 @@ class LeaseRecoveryService:
                 )
             except Exception as error:
                 error_count += 1
-                LOGGER.warning(
-                    "dispatcher_recovery_error job_uuid=%s attempt_count=%s "
-                    "error_type=%s",
-                    job.job_uuid,
-                    job.attempt_count,
-                    type(error).__name__,
+                log_event(
+                    LOGGER,
+                    logging.WARNING,
+                    service=SERVICE,
+                    event="lease_recovery",
+                    job_uuid=job.job_uuid,
+                    attempt_count=job.attempt_count,
+                    action="failed",
+                    dependency="postgresql",
+                    error_type=type(error).__name__,
                 )
                 continue
 
             if not recovered:
                 stale_count += 1
-                LOGGER.info(
-                    "dispatcher_recovery_stale job_uuid=%s attempt_count=%s",
-                    job.job_uuid,
-                    job.attempt_count,
+                log_event(
+                    LOGGER,
+                    logging.INFO,
+                    service=SERVICE,
+                    event="lease_recovery",
+                    job_uuid=job.job_uuid,
+                    attempt_count=job.attempt_count,
+                    action="stale",
                 )
             elif should_retry:
                 requeued_count += 1
-                LOGGER.debug(
-                    "dispatcher_recovery_requeued job_uuid=%s attempt_count=%s",
-                    job.job_uuid,
-                    job.attempt_count,
+                log_event(
+                    LOGGER,
+                    logging.INFO,
+                    service=SERVICE,
+                    event="retry_scheduled",
+                    job_uuid=job.job_uuid,
+                    attempt_count=job.attempt_count,
+                    next_attempt_count=job.attempt_count + 1,
+                    source="lease_recovery",
                 )
             else:
                 failed_count += 1
-                LOGGER.debug(
-                    "dispatcher_recovery_failed job_uuid=%s attempt_count=%s",
-                    job.job_uuid,
-                    job.attempt_count,
+                log_event(
+                    LOGGER,
+                    logging.INFO,
+                    service=SERVICE,
+                    event="job_failed",
+                    job_uuid=job.job_uuid,
+                    attempt_count=job.attempt_count,
+                    source="lease_recovery",
+                    failure_code="max_attempts_reached",
                 )
 
         return RecoveryBatchResult(

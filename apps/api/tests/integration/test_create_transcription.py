@@ -229,6 +229,44 @@ async def test_post_transcriptions_commits_job_and_publishes_complete_audio(
     assert list(audio_storage.root.rglob(".upload-*.tmp")) == []
 
 
+async def test_post_transcriptions_stays_available_when_redis_is_down(
+    audio_storage: FileSystemAudioStorage,
+    async_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Redis reste hors du chemin critique HTTP : seul PostgreSQL est écrit."""
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:1/0")
+    app = create_app(
+        settings=_api_settings(),
+        storage=audio_storage,
+        session_factory=async_session_factory,
+    )
+
+    async with _client_for(app) as client:
+        response = await client.post(
+            "/api/transcriptions",
+            data={"type": JobType.FAST.value},
+            files={
+                "audio_file": (
+                    "recording.wav",
+                    _valid_wav_content(),
+                    "audio/wav",
+                )
+            },
+        )
+
+    assert response.status_code == 202
+    job_uuid = UUID(response.json()["job_uuid"])
+
+    async with async_session_factory() as session:
+        saved_job = await JobRepository(session).get_by_uuid(job_uuid)
+
+    assert saved_job is not None
+    assert saved_job.status is JobStatus.QUEUED
+    assert saved_job.dispatch_required is True
+    assert saved_job.last_dispatched_at is None
+
+
 async def test_post_transcriptions_rejects_declared_wav_with_non_audio_content(
     api_client: AsyncClient,
     audio_storage: FileSystemAudioStorage,

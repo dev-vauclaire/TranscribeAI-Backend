@@ -5,9 +5,11 @@ from dispatcher.application import run_dispatch_cycle
 from dispatcher.config import DispatcherSettings
 from dispatcher.models import DispatcherCycleResult
 from transcribe_ai_shared import DatabaseSettings, RedisSettings
+from transcribe_ai_shared.observability import configure_logging, log_event
 
 
 LOGGER = logging.getLogger(__name__)
+SERVICE = "dispatcher"
 
 
 async def _run_from_environment() -> DispatcherCycleResult:
@@ -20,47 +22,67 @@ async def _run_from_environment() -> DispatcherCycleResult:
 
 
 def _log_summary(result: DispatcherCycleResult) -> None:
-    LOGGER.info(
-        "lease_recovery_summary selected=%s requeued=%s failed=%s stale=%s errors=%s",
-        result.recovery.selected_count,
-        result.recovery.requeued_count,
-        result.recovery.failed_count,
-        result.recovery.stale_count,
-        result.recovery.error_count,
+    log_event(
+        LOGGER,
+        logging.INFO,
+        service=SERVICE,
+        event="lease_recovery",
+        action="summary",
+        selected_count=result.recovery.selected_count,
+        requeued_count=result.recovery.requeued_count,
+        failed_count=result.recovery.failed_count,
+        stale_count=result.recovery.stale_count,
+        error_count=result.recovery.error_count,
     )
-    LOGGER.info(
-        "dispatch_reconciliation_summary selected=%s rearmed=%s stale=%s errors=%s",
-        result.reconciliation.selected_count,
-        result.reconciliation.rearmed_count,
-        result.reconciliation.stale_count,
-        result.reconciliation.error_count,
+    log_event(
+        LOGGER,
+        logging.INFO,
+        service=SERVICE,
+        event="reconciliation",
+        action="summary",
+        selected_count=result.reconciliation.selected_count,
+        rearmed_count=result.reconciliation.rearmed_count,
+        stale_count=result.reconciliation.stale_count,
+        error_count=result.reconciliation.error_count,
     )
-    LOGGER.info(
-        "dispatch_batch_summary selected=%s published=%s confirmed=%s "
-        "stale=%s errors=%s",
-        result.dispatch.selected_count,
-        result.dispatch.published_count,
-        result.dispatch.confirmed_count,
-        result.dispatch.stale_count,
-        result.dispatch.error_count,
+    log_event(
+        LOGGER,
+        logging.INFO,
+        service=SERVICE,
+        event="dispatch",
+        action="summary",
+        selected_count=result.dispatch.selected_count,
+        published_count=result.dispatch.published_count,
+        confirmed_count=result.dispatch.confirmed_count,
+        stale_count=result.dispatch.stale_count,
+        error_count=result.dispatch.error_count,
     )
 
 
 def main() -> int:
     """Traite un cycle et retourne un code exploitable par l'orchestrateur."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    configure_logging(service=SERVICE)
 
     try:
         result = asyncio.run(_run_from_environment())
     except KeyboardInterrupt:
-        LOGGER.warning("dispatcher_cycle_interrupted")
+        log_event(
+            LOGGER,
+            logging.WARNING,
+            service=SERVICE,
+            event="dispatcher_cycle",
+            action="interrupted",
+        )
         return 130
     except Exception as error:
-        # Le type permet le diagnostic initial sans journaliser de secret.
-        LOGGER.error("dispatcher_cycle_failed error_type=%s", type(error).__name__)
+        log_event(
+            LOGGER,
+            logging.ERROR,
+            service=SERVICE,
+            event="dispatcher_cycle",
+            action="failed",
+            error_type=type(error).__name__,
+        )
         return 1
 
     _log_summary(result)

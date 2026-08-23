@@ -3,9 +3,11 @@ import logging
 from dispatcher.models import DispatchBatchResult, DispatchJobSnapshot
 from dispatcher.protocols import DispatchJobStore
 from transcribe_ai_shared import JobStreamMessage, TranscriptionStreams
+from transcribe_ai_shared.observability import log_event
 
 
 LOGGER = logging.getLogger(__name__)
+SERVICE = "dispatcher"
 
 
 class DispatcherService:
@@ -32,45 +34,92 @@ class DispatcherService:
         error_count = 0
 
         for job in jobs:
-            redis_message_id: str | None = None
+            log_event(
+                LOGGER,
+                logging.INFO,
+                service=SERVICE,
+                event="dispatch_started",
+                job_uuid=job.job_uuid,
+                attempt_count=job.attempt_count,
+                job_type=job.job_type,
+            )
             try:
                 redis_message_id = await self._streams.publish(
                     self._message_from_snapshot(job)
                 )
-                published_count += 1
+            except Exception as error:
+                error_count += 1
+                log_event(
+                    LOGGER,
+                    logging.WARNING,
+                    service=SERVICE,
+                    event="dispatch_failed",
+                    job_uuid=job.job_uuid,
+                    attempt_count=job.attempt_count,
+                    job_type=job.job_type,
+                    dependency="redis",
+                    reason="publication_error",
+                    error_type=type(error).__name__,
+                )
+                continue
+
+            published_count += 1
+            log_event(
+                LOGGER,
+                logging.INFO,
+                service=SERVICE,
+                event="redis_published",
+                job_uuid=job.job_uuid,
+                attempt_count=job.attempt_count,
+                redis_message_id=redis_message_id,
+                job_type=job.job_type,
+                action="redis_published",
+            )
+
+            try:
                 confirmed = await self._job_store.mark_dispatched(job)
             except Exception as error:
                 error_count += 1
-                LOGGER.warning(
-                    "dispatcher_job_error job_uuid=%s job_type=%s "
-                    "attempt_count=%s redis_message_id=%s error_type=%s",
-                    job.job_uuid,
-                    job.job_type.value,
-                    job.attempt_count,
-                    redis_message_id,
-                    type(error).__name__,
+                log_event(
+                    LOGGER,
+                    logging.WARNING,
+                    service=SERVICE,
+                    event="dispatch_failed",
+                    job_uuid=job.job_uuid,
+                    attempt_count=job.attempt_count,
+                    redis_message_id=redis_message_id,
+                    job_type=job.job_type,
+                    dependency="postgresql",
+                    reason="confirmation_error",
+                    error_type=type(error).__name__,
                 )
                 continue
 
             if confirmed:
                 confirmed_count += 1
-                LOGGER.debug(
-                    "dispatcher_job_confirmed job_uuid=%s job_type=%s "
-                    "attempt_count=%s redis_message_id=%s",
-                    job.job_uuid,
-                    job.job_type.value,
-                    job.attempt_count,
-                    redis_message_id,
+                log_event(
+                    LOGGER,
+                    logging.INFO,
+                    service=SERVICE,
+                    event="dispatched",
+                    job_uuid=job.job_uuid,
+                    attempt_count=job.attempt_count,
+                    redis_message_id=redis_message_id,
+                    job_type=job.job_type,
+                    action="postgresql_confirmed",
                 )
             else:
                 stale_count += 1
-                LOGGER.info(
-                    "dispatcher_job_stale job_uuid=%s job_type=%s "
-                    "attempt_count=%s redis_message_id=%s",
-                    job.job_uuid,
-                    job.job_type.value,
-                    job.attempt_count,
-                    redis_message_id,
+                log_event(
+                    LOGGER,
+                    logging.INFO,
+                    service=SERVICE,
+                    event="dispatch_confirmation_rejected",
+                    job_uuid=job.job_uuid,
+                    attempt_count=job.attempt_count,
+                    redis_message_id=redis_message_id,
+                    job_type=job.job_type,
+                    reason="stale_snapshot",
                 )
 
         return DispatchBatchResult(

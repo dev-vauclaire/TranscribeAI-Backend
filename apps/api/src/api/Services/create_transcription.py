@@ -29,6 +29,7 @@ from transcribe_ai_shared import (
     TranscriptionJob,
     async_transaction,
 )
+from transcribe_ai_shared.observability import log_event
 
 
 logger = logging.getLogger(__name__)
@@ -139,16 +140,31 @@ class CreateTranscriptionService:
             if repository_add_completed:
                 persisted = await self._job_exists_after_commit_error(job_uuid)
                 if persisted is True:
-                    return CreateTranscriptionResult(
-                        job_uuid=job_uuid,
-                        status=JobStatus.QUEUED,
-                    )
+                    return self._created_result(job_uuid, job_type)
             else:
                 await self._delete_after_failure(location)
             raise TranscriptionPersistenceError(
                 "Le job de transcription n'a pas pu être enregistré."
             ) from error
 
+        return self._created_result(job_uuid, job_type)
+
+    @staticmethod
+    def _created_result(
+        job_uuid: UUID,
+        job_type: JobType,
+    ) -> CreateTranscriptionResult:
+        """Journalise uniquement un job dont la persistance est confirmée."""
+        log_event(
+            logger,
+            logging.INFO,
+            service="api",
+            event="job_created",
+            job_uuid=job_uuid,
+            attempt_count=0,
+            job_type=job_type.value,
+            status=JobStatus.QUEUED.value,
+        )
         return CreateTranscriptionResult(
             job_uuid=job_uuid,
             status=JobStatus.QUEUED,
@@ -200,10 +216,15 @@ class CreateTranscriptionService:
         """Préserve l'erreur initiale même si la compensation échoue."""
         try:
             await asyncio.to_thread(self._storage.delete, location)
-        except Exception:
-            logger.exception(
-                "Impossible de supprimer l'audio orphelin du job %s.",
-                location.job_uuid,
+        except Exception as error:
+            log_event(
+                logger,
+                logging.ERROR,
+                service="api",
+                event="audio_cleanup_failed",
+                job_uuid=location.job_uuid,
+                dependency="filesystem",
+                error_type=type(error).__name__,
             )
 
     async def _job_exists_after_commit_error(self, job_uuid: UUID) -> bool | None:
@@ -217,9 +238,15 @@ class CreateTranscriptionService:
             async with self._session_factory() as session:
                 repository = self._repository_factory(session)
                 return (await repository.get_by_uuid(job_uuid)) is not None
-        except Exception:
-            logger.exception(
-                "Impossible de vérifier le commit du job %s après une erreur.",
-                job_uuid,
+        except Exception as error:
+            log_event(
+                logger,
+                logging.ERROR,
+                service="api",
+                event="job_commit_verification_failed",
+                job_uuid=job_uuid,
+                attempt_count=0,
+                dependency="postgresql",
+                error_type=type(error).__name__,
             )
             return None

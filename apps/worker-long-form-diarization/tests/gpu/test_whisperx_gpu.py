@@ -30,7 +30,8 @@ async def test_whisperx_transcribes_and_diarizes_a_real_french_audio_on_gpu(
     if hugging_face_token is None:
         pytest.fail("WORKER_TRANSCRIBER_HUGGING_FACE_TOKEN est requis")
 
-    model_directory = Path(os.getenv("WORKER_TRANSCRIBER_MODEL_DIRECTORY", "/models"))
+    model_directory = tmp_path / "models"
+    model_directory.mkdir()
     storage = FileSystemAudioStorage(tmp_path / "transcriptions")
     with french_dialogue_audio_path.open("rb") as audio:
         location = storage.save(

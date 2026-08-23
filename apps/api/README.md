@@ -132,8 +132,36 @@ des données sensibles.
 
 - un job absent retourne `404 Not Found` ;
 - un UUID mal formé retourne `422 Unprocessable Content` ;
-- une lecture PostgreSQL impossible ou un job `COMPLETED` sans résultat
-  durable retourne `500 Internal Server Error` sans détail interne.
+- une lecture PostgreSQL impossible retourne `500 Internal Server Error` sans
+  détail interne ;
+- un job `COMPLETED` sans résultat durable retourne aussi `500 Internal Server
+  Error`, avec un message distinct signalant l'indisponibilité du résultat.
+
+## Healthchecks
+
+Les probes sont volontairement exposées hors du préfixe métier `/api` :
+
+- `GET /health/live` retourne `200` dès que le processus ASGI répond. Cette
+  liveness ne contacte aucune dépendance externe ;
+- `GET /health/ready` exécute une requête PostgreSQL minimale et bornée. Elle
+  retourne `200` avec `{"status":"ready"}` lorsque PostgreSQL répond, sinon
+  `503` avec `{"status":"not_ready"}`.
+
+Redis ne participe pas à la readiness de l'API et n'est jamais contacté lors
+de `POST /api/transcriptions`. L'API persiste un job `QUEUED` avec
+`dispatch_required=true`, puis le dispatcher prend en charge sa publication.
+Une panne Redis ne doit donc pas interrompre la création des jobs.
+
+## Journalisation
+
+Le point d'entrée configure des logs JSON avec `service=api` et conserve cette
+configuration pour les logs Uvicorn. L'événement `job_created` n'est émis
+qu'après confirmation de la persistance PostgreSQL. Les erreurs techniques sont
+journalisées sous forme d'événements et de types d'erreur : ni le message brut
+des exceptions, ni le contenu audio, ni les secrets de connexion ne sont
+ajoutés aux champs structurés. Les access logs Uvicorn ne conservent que la
+méthode HTTP et le statut ; l'adresse cliente, le chemin et la query string sont
+volontairement exclus.
 
 ## Erreurs de création
 
@@ -158,6 +186,7 @@ données ni la sortie brute de `ffprobe`.
 | `API_MAX_UPLOAD_SIZE_BYTES` | non | `104857600` | Limite stricte de 100 MiB, en octets |
 | `FFPROBE_PATH` | non | `ffprobe` | Nom ou chemin du binaire d'inspection |
 | `FFPROBE_TIMEOUT_SECONDS` | non | `30` | Délai maximal de l'inspection ffprobe |
+| `API_READINESS_TIMEOUT_SECONDS` | non | `2` | Délai maximal du contrôle PostgreSQL de readiness |
 | `API_FAST_MAX_DURATION_SECONDS` | non | `900` | Durée maximale FAST (15 minutes) |
 | `API_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS` | non | `14400` | Durée maximale avec diarisation (4 heures) |
 | `API_HOST` | non | `127.0.0.1` | Interface d'écoute Uvicorn |

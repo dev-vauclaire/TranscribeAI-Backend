@@ -5,6 +5,7 @@ import logging
 from uuid import UUID
 
 from transcribe_ai_shared.database.models import JobStatus, TranscriptionJob
+from transcribe_ai_shared.observability import log_event
 from transcribe_ai_shared.storage import (
     AudioStorageMaintenance,
     TranscriptionDirectory,
@@ -13,10 +14,23 @@ from transcribe_ai_shared.storage import (
 
 JobLoader = Callable[[Collection[UUID]], Awaitable[list[TranscriptionJob]]]
 LOGGER = logging.getLogger(__name__)
+SERVICE_NAME = "maintenance"
 
 
 class StorageCleanupAbortedError(RuntimeError):
     """Erreur globale imposant l'abandon du cleanup avant toute suppression."""
+
+    def __init__(
+        self,
+        *,
+        dependency: str,
+        reason: str,
+        error_type: str,
+    ) -> None:
+        super().__init__("Le cleanup a été interrompu par mesure de sécurité.")
+        self.dependency = dependency
+        self.reason = reason
+        self.error_type = error_type
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +75,9 @@ class StorageCleanupService:
             scan = self._storage.scan_transcription_directories()
         except Exception as error:
             raise StorageCleanupAbortedError(
-                "Le stockage audio n'a pas pu être parcouru en sécurité."
+                dependency="filesystem",
+                reason="scan_failed",
+                error_type=type(error).__name__,
             ) from error
 
         inspected_count = (
@@ -101,7 +117,9 @@ class StorageCleanupService:
             )
         except Exception as error:
             raise StorageCleanupAbortedError(
-                "Les états PostgreSQL n'ont pas pu être déterminés en sécurité."
+                dependency="postgresql",
+                reason="job_lookup_failed",
+                error_type=type(error).__name__,
             ) from error
 
         jobs_by_uuid = {job.job_uuid: job for job in jobs}
@@ -127,9 +145,15 @@ class StorageCleanupService:
             if job.status not in {JobStatus.COMPLETED, JobStatus.FAILED}:
                 kept_count += 1
                 error_count += 1
-                LOGGER.warning(
-                    "storage_cleanup_keep job_uuid=%s reason=unknown_status",
-                    directory.job_uuid,
+                log_event(
+                    LOGGER,
+                    logging.WARNING,
+                    service=SERVICE_NAME,
+                    event="cleanup",
+                    job_uuid=directory.job_uuid,
+                    attempt_count=job.attempt_count,
+                    action="keep",
+                    reason="unknown_status",
                 )
                 continue
 
@@ -137,14 +161,23 @@ class StorageCleanupService:
                 kept_count += 1
                 if job.completed_at is None or not self._is_aware(job.completed_at):
                     error_count += 1
-                    LOGGER.warning(
-                        "storage_cleanup_keep job_uuid=%s "
-                        "reason=missing_terminal_timestamp",
-                        directory.job_uuid,
+                    log_event(
+                        LOGGER,
+                        logging.WARNING,
+                        service=SERVICE_NAME,
+                        event="cleanup",
+                        job_uuid=directory.job_uuid,
+                        attempt_count=job.attempt_count,
+                        action="keep",
+                        reason="missing_terminal_timestamp",
                     )
                 continue
 
-            if self._delete_directory(directory, reason=job.status.value.lower()):
+            if self._delete_directory(
+                directory,
+                reason=job.status.value.lower(),
+                attempt_count=job.attempt_count,
+            ):
                 deleted_count += 1
             else:
                 kept_count += 1
@@ -164,30 +197,48 @@ class StorageCleanupService:
         directory: TranscriptionDirectory,
         *,
         reason: str,
+        attempt_count: int | None = None,
     ) -> bool:
         """Isole une erreur locale afin de poursuivre avec les autres dossiers."""
         try:
             deleted = self._storage.delete_transcription_directory(directory)
         except Exception as error:
-            LOGGER.warning(
-                "storage_cleanup_keep job_uuid=%s action=delete reason=%s "
-                "error_type=%s",
-                directory.job_uuid,
-                reason,
-                type(error).__name__,
+            log_event(
+                LOGGER,
+                logging.WARNING,
+                service=SERVICE_NAME,
+                event="cleanup",
+                job_uuid=directory.job_uuid,
+                attempt_count=attempt_count,
+                action="keep",
+                reason="delete_failed",
+                source=reason,
+                error_type=type(error).__name__,
             )
             return False
 
         if deleted:
-            LOGGER.info(
-                "storage_cleanup_delete job_uuid=%s reason=%s",
-                directory.job_uuid,
-                reason,
+            log_event(
+                LOGGER,
+                logging.INFO,
+                service=SERVICE_NAME,
+                event="cleanup",
+                job_uuid=directory.job_uuid,
+                attempt_count=attempt_count,
+                action="delete",
+                reason=reason,
             )
         else:
-            LOGGER.info(
-                "storage_cleanup_delete job_uuid=%s reason=already_absent",
-                directory.job_uuid,
+            log_event(
+                LOGGER,
+                logging.INFO,
+                service=SERVICE_NAME,
+                event="cleanup",
+                job_uuid=directory.job_uuid,
+                attempt_count=attempt_count,
+                action="delete",
+                reason="already_absent",
+                source=reason,
             )
         # Une cible déjà absente satisfait l'opération idempotente de cleanup.
         return True

@@ -119,6 +119,7 @@ def build_app(
         settings=TEST_SETTINGS,
         transcription_service=service,  # type: ignore[arg-type]
         transcription_query_service=object(),  # type: ignore[arg-type]
+        readiness_service=object(),  # type: ignore[arg-type]
         upload_metadata_validator=validator,  # type: ignore[arg-type]
     )
 
@@ -129,9 +130,21 @@ async def test_all_routes_are_namespaced_under_api() -> None:
         RecordingUploadMetadataValidator(),
     )
 
-    route_paths = [route.path for route in app.routes if hasattr(route, "path")]
-    assert route_paths
-    assert all(path.startswith("/api/") for path in route_paths)
+    documented_paths = set(app.openapi()["paths"])
+    health_paths = {"/health/live", "/health/ready"}
+    technical_paths = {
+        app.openapi_url,
+        app.docs_url,
+        app.redoc_url,
+        app.swagger_ui_oauth2_redirect_url,
+    }
+
+    assert None not in technical_paths
+    assert health_paths <= documented_paths
+    assert all(
+        path.startswith("/api/") or path in health_paths for path in documented_paths
+    )
+    assert all(path.startswith("/api/") for path in technical_paths if path is not None)
 
 
 async def post_transcription(

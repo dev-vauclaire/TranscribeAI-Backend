@@ -10,6 +10,7 @@ from api.config import (
     DEFAULT_FAST_MAX_DURATION_SECONDS,
     DEFAULT_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS,
     DEFAULT_MAX_UPLOAD_SIZE_BYTES,
+    DEFAULT_READINESS_TIMEOUT_SECONDS,
 )
 
 
@@ -24,6 +25,7 @@ def isolate_api_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "API_MAX_UPLOAD_SIZE_BYTES",
         "FFPROBE_PATH",
         "FFPROBE_TIMEOUT_SECONDS",
+        "API_READINESS_TIMEOUT_SECONDS",
         "API_FAST_MAX_DURATION_SECONDS",
         "API_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS",
     ):
@@ -45,6 +47,13 @@ def test_api_settings_use_documented_duration_defaults() -> None:
     assert DEFAULT_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS == Decimal("14400")
     assert settings.fast_max_duration_seconds == Decimal("900")
     assert settings.long_form_diarization_max_duration_seconds == Decimal("14400")
+
+
+def test_api_settings_use_documented_readiness_timeout_default() -> None:
+    settings = ApiSettings()
+
+    assert DEFAULT_READINESS_TIMEOUT_SECONDS == 2.0
+    assert settings.readiness_timeout_seconds == 2.0
 
 
 def test_api_settings_override_upload_limit_from_environment(
@@ -99,7 +108,23 @@ def test_api_settings_reject_blank_ffprobe_path() -> None:
         ApiSettings(ffprobe_path="   ")
 
 
+def test_api_settings_override_readiness_timeout_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("API_READINESS_TIMEOUT_SECONDS", "0.75")
+
+    settings = ApiSettings()
+
+    assert settings.readiness_timeout_seconds == 0.75
+
+
 @pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf")])
 def test_api_settings_reject_invalid_ffprobe_timeout(timeout: float) -> None:
     with pytest.raises(ValidationError):
         ApiSettings(ffprobe_timeout_seconds=timeout)
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf")])
+def test_api_settings_reject_invalid_readiness_timeout(timeout: float) -> None:
+    with pytest.raises(ValidationError):
+        ApiSettings(readiness_timeout_seconds=timeout)

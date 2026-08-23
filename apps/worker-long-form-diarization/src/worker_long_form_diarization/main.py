@@ -14,9 +14,11 @@ from transcribe_ai_shared import (
     WorkerIdle,
     WorkerProcessResult,
 )
+from transcribe_ai_shared.observability import configure_logging, log_event
 
 
 LOGGER = logging.getLogger(__name__)
+SERVICE = "worker-long-form-diarization"
 
 
 def _create_transcriber(
@@ -42,10 +44,16 @@ def _create_transcriber(
 def _log_result(result: WorkerProcessResult) -> None:
     """Journalise une itération sans exposer le résultat de transcription."""
     level = logging.DEBUG if isinstance(result, WorkerIdle) else logging.INFO
-    LOGGER.log(
+    message = None if isinstance(result, WorkerIdle) else result.message
+    log_event(
+        LOGGER,
         level,
-        "worker_long_form_diarization_iteration_completed result_type=%s",
-        type(result).__name__,
+        service=SERVICE,
+        event="worker_iteration_completed",
+        job_uuid=message.job_uuid if message is not None else None,
+        attempt_count=message.attempt_count if message is not None else None,
+        redis_message_id=(message.redis_message_id if message is not None else None),
+        result_type=type(result).__name__,
     )
 
 
@@ -64,24 +72,34 @@ async def _run_from_environment() -> NoReturn:
 
 def main() -> int:
     """Exécute le worker de transcription longue avec diarisation."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    configure_logging(service=SERVICE)
 
     try:
         asyncio.run(_run_from_environment())
     except KeyboardInterrupt:
-        LOGGER.warning("worker_long_form_diarization_interrupted")
+        log_event(
+            LOGGER,
+            logging.WARNING,
+            service=SERVICE,
+            event="worker_interrupted",
+        )
         return 130
     except Exception as error:
-        LOGGER.error(
-            "worker_long_form_diarization_failed error_type=%s",
-            type(error).__name__,
+        log_event(
+            LOGGER,
+            logging.ERROR,
+            service=SERVICE,
+            event="worker_process_failed",
+            error_type=type(error).__name__,
         )
         return 1
 
-    LOGGER.error("worker_long_form_diarization_stopped_unexpectedly")
+    log_event(
+        LOGGER,
+        logging.ERROR,
+        service=SERVICE,
+        event="worker_stopped_unexpectedly",
+    )
     return 1
 
 

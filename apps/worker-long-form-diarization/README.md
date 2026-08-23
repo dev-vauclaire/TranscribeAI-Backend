@@ -168,6 +168,26 @@ l'UID `10001`; un volume Docker neuf hérite des permissions de l'image. Chaque
 replica charge sa propre copie des modèles : le nombre de replicas doit donc
 être dimensionné selon la VRAM disponible.
 
+## Healthcheck
+
+L'image déclare un `HEALTHCHECK` Docker qui exécute la commande légère
+`worker-healthcheck` toutes les 30 secondes. Elle vérifie PostgreSQL avec
+`SELECT 1` et Redis avec `PING`, sans charger WhisperX/Pyannote ni exposer de
+port HTTP. Ces deux dépendances sont nécessaires au flow du worker : Redis
+fournit les messages et PostgreSQL porte le claim, le lease et la finalisation.
+
+La sonde retourne `0` lorsque les deux services répondent et `1` sinon. Elle
+borne ses opérations à cinq secondes, tandis que Docker arrête la commande
+après dix secondes et marque le conteneur unhealthy après trois échecs. Le
+client Redis et le moteur PostgreSQL créés par chaque sonde sont toujours
+refermés. Docker ne redémarre pas automatiquement un conteneur unhealthy : la
+politique de redémarrage reste à configurer au niveau du déploiement.
+
+Cette sonde certifie les dépendances, pas la fin du chargement des modèles ni
+la progression de la boucle principale. Elle peut donc devenir `healthy`
+pendant l'initialisation de WhisperX/Pyannote ; un orchestrateur ne doit pas
+l'interpréter seule comme preuve qu'un worker est déjà prêt à consommer.
+
 ## Fake de développement
 
 Le fake reste disponible pour les tests et les compositions locales. Son
@@ -212,13 +232,13 @@ créé par Hagindaz pour le Wikibook French et distribué sous CC BY-SA 3.0 / GF
 1.2+. Le téléchargement est borné à 1 Mio et protégé par une taille et une
 empreinte SHA-256 attendues avant l'inférence
 (`f700390a491a1af077d65fb29e0e7099a711324f6c1847308ba9dc74bc40ff1a`). Le
-test exige donc un accès réseau, le token Hugging Face et un cache modèle
-persistant. Il reste exclu de la CI standard :
+test exige donc un accès réseau et le token Hugging Face. Les modèles sont
+téléchargés dans un répertoire temporaire propre au test, puis supprimés avec
+celui-ci. Il reste exclu de la CI standard :
 
 ```shell
 RUN_GPU_TESTS=1 \
 WORKER_TRANSCRIBER_HUGGING_FACE_TOKEN=hf_xxx \
-WORKER_TRANSCRIBER_MODEL_DIRECTORY=/chemin/absolu/models \
 uv run --package worker-long-form-diarization --extra gpu \
   pytest -m gpu apps/worker-long-form-diarization/tests/gpu
 ```

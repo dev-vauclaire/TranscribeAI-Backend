@@ -166,7 +166,7 @@ async def test_get_completed_transcription_returns_500_without_durable_result(
 
     assert response.status_code == 500
     assert response.json() == {
-        "detail": "Le statut de la transcription est temporairement indisponible."
+        "detail": "Le résultat de la transcription est indisponible."
     }
 
 

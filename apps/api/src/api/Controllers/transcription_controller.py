@@ -17,9 +17,10 @@ from api.exceptions import (
     InvalidAudioFileError,
     MediaProbeUnavailableError,
     MissingUploadFilenameError,
-    TranscriptionPersistenceError,
     TranscriptionNotFoundError,
+    TranscriptionPersistenceError,
     TranscriptionQueryError,
+    TranscriptionResultNotFoundError,
     UnsupportedAudioCodecError,
     UnsupportedAudioFormatError,
     UnsupportedDeclaredMediaTypeError,
@@ -102,6 +103,11 @@ async def get_transcription(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="La transcription demandée n'existe pas.",
+        ) from error
+    except TranscriptionResultNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Le résultat de la transcription est indisponible.",
         ) from error
     except TranscriptionQueryError as error:
         raise HTTPException(

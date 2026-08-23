@@ -1,9 +1,11 @@
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import NoReturn
+from typing import Final, NoReturn
 
 from transcribe_ai_shared.database.models import JobStatus, JobType
+from transcribe_ai_shared.observability import log_event
 from transcribe_ai_shared.queue.models import ReceivedJobStreamMessage
 from transcribe_ai_shared.queue.protocols import TranscriptionStreams
 from transcribe_ai_shared.worker.exceptions import (
@@ -35,8 +37,23 @@ from transcribe_ai_shared.worker.protocols import (
 )
 
 
+LOGGER = logging.getLogger(__name__)
+_WORKER_SERVICES: Final = {
+    JobType.FAST: "worker-fast",
+    JobType.LONG_FORM_DIARIZATION: "worker-long-form-diarization",
+}
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _service_for_job_type(job_type: JobType) -> str:
+    """Associe chaque stream métier au service worker qui le consomme."""
+    try:
+        return _WORKER_SERVICES[job_type]
+    except KeyError as error:
+        raise ValueError("job_type ne correspond à aucun service worker") from error
 
 
 class WorkerRuntime:
@@ -80,6 +97,7 @@ class WorkerRuntime:
         self._completer = completer
         self._failure_handler = failure_handler
         self._job_type = job_type
+        self._service = _service_for_job_type(job_type)
         self._group_name = group_name
         self._worker_id = worker_id
         self._lease_duration = lease_duration
@@ -168,41 +186,84 @@ class WorkerRuntime:
                 message.job_type,
             )
 
-        claimed_job = await self._job_store.claim(
-            message.job_uuid,
-            self._worker_id,
-            self._lease_expires_at(),
-            message.attempt_count,
-        )
-        if claimed_job is None:
-            if defer_processing_attempt and await self._job_store.is_processing_attempt(
+        try:
+            claimed_job = await self._job_store.claim(
                 message.job_uuid,
+                self._worker_id,
+                self._lease_expires_at(),
                 message.attempt_count,
-            ):
-                return WorkerClaimDeferred(message=message)
-            removed = await self._streams.ack_and_delete(
-                self._group_name,
-                message,
             )
+        except Exception as error:
+            self._record_message_event(
+                logging.ERROR,
+                "claim_failed",
+                message,
+                dependency="postgresql",
+                error_type=type(error).__name__,
+            )
+            raise
+        if claimed_job is None:
+            processing_attempt_active = (
+                defer_processing_attempt
+                and await self._job_store.is_processing_attempt(
+                    message.job_uuid,
+                    message.attempt_count,
+                )
+            )
+            self._record_message_event(
+                logging.INFO,
+                "claim_rejected",
+                message,
+                reason=(
+                    "processing_attempt_active"
+                    if processing_attempt_active
+                    else "postgres_claim_not_granted"
+                ),
+            )
+            if processing_attempt_active:
+                return WorkerClaimDeferred(message=message)
+            removed = await self._acknowledge_message(message)
             return WorkerClaimRejected(
                 message=message,
                 removed_from_stream=removed,
             )
 
+        self._record_message_event(
+            logging.INFO,
+            "job_claimed",
+            message,
+            attempt_count=claimed_job.attempt_count,
+            status=JobStatus.PROCESSING.value,
+        )
         try:
             output = await self._transcribe_with_heartbeat(claimed_job, message)
         except TranscriptionExecutionError as error:
             failure = error.failure
         else:
-            await self._completer.complete(
-                job=claimed_job,
-                worker_id=self._worker_id,
-                output=output,
-            )
-            removed = await self._streams.ack_and_delete(
-                self._group_name,
+            try:
+                await self._completer.complete(
+                    job=claimed_job,
+                    worker_id=self._worker_id,
+                    output=output,
+                )
+            except Exception as error:
+                self._record_message_event(
+                    logging.ERROR,
+                    "job_completion_failed",
+                    message,
+                    attempt_count=claimed_job.attempt_count,
+                    dependency="postgresql",
+                    error_type=type(error).__name__,
+                )
+                raise
+            self._record_message_event(
+                logging.INFO,
+                "job_completed",
                 message,
+                attempt_count=claimed_job.attempt_count,
+                status=JobStatus.COMPLETED.value,
             )
+            removed = await self._acknowledge_message(message)
             return WorkerCompleted(
                 message=message,
                 job=claimed_job,
@@ -225,22 +286,42 @@ class WorkerRuntime:
         failure: ClassifiedTranscriptionFailure,
     ) -> WorkerRetryScheduled | WorkerFailed:
         """Persiste l'échec avant de supprimer l'ancien message Redis."""
-        resolution = await self._failure_handler.handle(
-            job=job,
-            worker_id=self._worker_id,
-            failure=failure,
-        )
+        try:
+            resolution = await self._failure_handler.handle(
+                job=job,
+                worker_id=self._worker_id,
+                failure=failure,
+            )
+        except Exception as error:
+            self._record_message_event(
+                logging.ERROR,
+                "failure_transition_failed",
+                message,
+                attempt_count=job.attempt_count,
+                dependency="postgresql",
+                error_type=type(error).__name__,
+                failure_category=failure.category.value,
+                failure_code=failure.error_code,
+            )
+            raise
 
         if resolution.status not in {JobStatus.QUEUED, JobStatus.FAILED}:
             raise ValueError(
                 "Le gestionnaire d'échec doit retourner un statut QUEUED ou FAILED"
             )
 
-        removed = await self._streams.ack_and_delete(
-            self._group_name,
-            message,
-        )
         if resolution.status is JobStatus.QUEUED:
+            self._record_message_event(
+                logging.INFO,
+                "retry_scheduled",
+                message,
+                attempt_count=job.attempt_count,
+                failure_category=failure.category.value,
+                failure_code=failure.error_code,
+                next_attempt_count=resolution.attempt_count,
+                status=JobStatus.QUEUED.value,
+            )
+            removed = await self._acknowledge_message(message)
             return WorkerRetryScheduled(
                 message=message,
                 job=job,
@@ -248,6 +329,16 @@ class WorkerRuntime:
                 next_attempt_count=resolution.attempt_count,
                 removed_from_stream=removed,
             )
+        self._record_message_event(
+            logging.ERROR,
+            "job_failed",
+            message,
+            attempt_count=job.attempt_count,
+            failure_category=failure.category.value,
+            failure_code=failure.error_code,
+            status=JobStatus.FAILED.value,
+        )
+        removed = await self._acknowledge_message(message)
         return WorkerFailed(
             message=message,
             job=job,
@@ -261,12 +352,19 @@ class WorkerRuntime:
         message: ReceivedJobStreamMessage,
     ) -> TranscriptionOutput:
         """Exécute l'inférence tant que la tentative conserve un lease valide."""
+        self._record_message_event(
+            logging.INFO,
+            "transcription_started",
+            message,
+            attempt_count=job.attempt_count,
+            status=JobStatus.PROCESSING.value,
+        )
         transcription_task = asyncio.create_task(
             self._transcribe(job),
             name=f"transcription-{job.job_uuid}",
         )
         heartbeat_task = asyncio.create_task(
-            self._heartbeat(job),
+            self._heartbeat(job, message),
             name=f"heartbeat-{job.job_uuid}",
         )
 
@@ -323,7 +421,7 @@ class WorkerRuntime:
 
         # Ce dernier CAS couvre une boucle événementielle restée bloquée entre
         # deux ticks et redonne une fenêtre complète à la transaction terminale.
-        await self._renew_lease_or_raise(job)
+        await self._renew_lease_or_raise(job, message)
         return output
 
     async def _transcribe(self, job: ClaimedJob) -> TranscriptionOutput:
@@ -332,12 +430,20 @@ class WorkerRuntime:
             raise TypeError("transcribe doit retourner un TranscriptionOutput")
         return output
 
-    async def _heartbeat(self, job: ClaimedJob) -> None:
+    async def _heartbeat(
+        self,
+        job: ClaimedJob,
+        message: ReceivedJobStreamMessage,
+    ) -> None:
         while True:
             await self._sleep(self._heartbeat_interval.total_seconds())
-            await self._renew_lease_or_raise(job)
+            await self._renew_lease_or_raise(job, message)
 
-    async def _renew_lease_or_raise(self, job: ClaimedJob) -> None:
+    async def _renew_lease_or_raise(
+        self,
+        job: ClaimedJob,
+        message: ReceivedJobStreamMessage,
+    ) -> None:
         try:
             renewed = await self._job_store.renew_lease(
                 job.job_uuid,
@@ -346,17 +452,83 @@ class WorkerRuntime:
                 job.attempt_count,
             )
         except Exception as error:
+            self._record_message_event(
+                logging.ERROR,
+                "heartbeat_failed",
+                message,
+                attempt_count=job.attempt_count,
+                dependency="postgresql",
+                error_type=type(error).__name__,
+            )
             raise WorkerHeartbeatError(
                 job.job_uuid,
                 self._worker_id,
                 job.attempt_count,
             ) from error
         if not renewed:
+            self._record_message_event(
+                logging.ERROR,
+                "heartbeat_lost",
+                message,
+                attempt_count=job.attempt_count,
+            )
             raise WorkerLeaseLostError(
                 job.job_uuid,
                 self._worker_id,
                 job.attempt_count,
             )
+
+    async def _acknowledge_message(
+        self,
+        message: ReceivedJobStreamMessage,
+    ) -> bool:
+        """Journalise l'ACK seulement lorsque Redis confirme sa suppression."""
+        try:
+            removed = await self._streams.ack_and_delete(
+                self._group_name,
+                message,
+            )
+        except Exception as error:
+            self._record_message_event(
+                logging.ERROR,
+                "redis_message_ack_failed",
+                message,
+                dependency="redis",
+                error_type=type(error).__name__,
+            )
+            raise
+        if removed:
+            self._record_message_event(
+                logging.INFO,
+                "redis_message_acked",
+                message,
+            )
+        return removed
+
+    def _record_message_event(
+        self,
+        level: int,
+        event: str,
+        message: ReceivedJobStreamMessage,
+        *,
+        attempt_count: int | None = None,
+        **fields: object,
+    ) -> None:
+        """Ajoute les corrélations communes sans exposer le payload du job."""
+        log_event(
+            LOGGER,
+            level,
+            service=self._service,
+            event=event,
+            job_uuid=message.job_uuid,
+            attempt_count=(
+                message.attempt_count if attempt_count is None else attempt_count
+            ),
+            worker_id=self._worker_id,
+            redis_message_id=message.redis_message_id,
+            job_type=self._job_type.value,
+            **fields,
+        )
 
     @staticmethod
     async def _settle_task(

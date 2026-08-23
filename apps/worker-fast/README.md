@@ -123,6 +123,26 @@ mémoire GPU. Le dimensionnement du nombre de replicas doit tenir compte de la
 VRAM disponible. Le pilote de l'hôte doit être compatible avec CUDA 12.9 selon
 la [matrice NVIDIA](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html).
 
+## Healthcheck
+
+L'image déclare un `HEALTHCHECK` Docker qui exécute la commande légère
+`worker-healthcheck` toutes les 30 secondes. Elle vérifie PostgreSQL avec
+`SELECT 1` et Redis avec `PING`, sans charger Faster-Whisper ni exposer de port
+HTTP. Ces deux dépendances sont nécessaires au flow du worker : Redis fournit
+les messages et PostgreSQL porte le claim, le lease et la finalisation.
+
+La sonde retourne `0` lorsque les deux services répondent et `1` sinon. Elle
+borne ses opérations à cinq secondes, tandis que Docker arrête la commande
+après dix secondes et marque le conteneur unhealthy après trois échecs. Le
+client Redis et le moteur PostgreSQL créés par chaque sonde sont toujours
+refermés. Docker ne redémarre pas automatiquement un conteneur unhealthy : la
+politique de redémarrage reste à configurer au niveau du déploiement.
+
+Cette sonde certifie les dépendances, pas la fin du chargement du modèle ni la
+progression de la boucle principale. Elle peut donc devenir `healthy` pendant
+l'initialisation de Faster-Whisper ; un orchestrateur ne doit pas l'interpréter
+seule comme preuve qu'un worker est déjà prêt à consommer.
+
 ## Fake de développement
 
 Le fake reste disponible pour les tests et les compositions locales. Son

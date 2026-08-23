@@ -2,6 +2,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from decimal import Decimal
 from io import BytesIO
+import logging
 from types import TracebackType
 from typing import Self
 from unittest.mock import AsyncMock, MagicMock, call, create_autospec
@@ -216,6 +217,36 @@ async def test_create_persists_a_queued_job_for_each_transcription_profile(
     harness.storage.delete.assert_not_called()
 
 
+async def test_create_logs_job_only_after_its_transaction_commits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = build_service_harness()
+    event_recorder = MagicMock()
+
+    def record_event(*args, **kwargs) -> None:
+        assert harness.transaction.committed is True
+        event_recorder(*args, **kwargs)
+
+    monkeypatch.setattr(create_transcription_module, "log_event", record_event)
+
+    result = await harness.service.create(
+        source=BytesIO(AUDIO_CONTENT),
+        extension="wav",
+        job_type=JobType.FAST,
+    )
+
+    event_recorder.assert_called_once_with(
+        create_transcription_module.logger,
+        logging.INFO,
+        service="api",
+        event="job_created",
+        job_uuid=result.job_uuid,
+        attempt_count=0,
+        job_type=JobType.FAST.value,
+        status=JobStatus.QUEUED.value,
+    )
+
+
 @pytest.mark.parametrize(
     ("job_type", "limit"),
     [
@@ -316,11 +347,15 @@ async def test_create_rejects_invalid_metadata_from_an_alternate_probe(
     harness.repository.add.assert_not_awaited()
 
 
-async def test_cleanup_failure_does_not_hide_original_media_error() -> None:
+async def test_cleanup_failure_does_not_hide_or_log_the_original_error_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     harness = build_service_harness()
     original_error = InvalidAudioFileError("invalid audio")
     harness.media_probe.probe.side_effect = original_error
     harness.storage.delete.side_effect = OSError("volume unavailable")
+    event_recorder = MagicMock()
+    monkeypatch.setattr(create_transcription_module, "log_event", event_recorder)
 
     with pytest.raises(InvalidAudioFileError) as captured:
         await harness.service.create(
@@ -331,6 +366,16 @@ async def test_cleanup_failure_does_not_hide_original_media_error() -> None:
 
     assert captured.value is original_error
     harness.storage.delete.assert_called_once_with(harness.stored_location)
+    event_recorder.assert_called_once_with(
+        create_transcription_module.logger,
+        logging.ERROR,
+        service="api",
+        event="audio_cleanup_failed",
+        job_uuid=harness.stored_location.job_uuid,
+        dependency="filesystem",
+        error_type="OSError",
+    )
+    assert "volume unavailable" not in repr(event_recorder.call_args)
 
 
 async def test_create_translates_storage_failure_without_probe_or_transaction() -> None:

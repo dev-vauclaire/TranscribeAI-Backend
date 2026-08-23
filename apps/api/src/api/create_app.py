@@ -6,12 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from api.Media.ffprobe import FFprobeMediaProbe
 from api.Media.protocols import MediaProbe
-from api.Routes import api_router
+from api.Routes import api_router, health_router
 from api.Services.create_transcription import CreateTranscriptionService
 from api.Services.get_transcription import GetTranscriptionService
+from api.Services.health import PostgresReadinessService
 from api.Services.protocols import (
     JobReadRepositoryFactory,
     JobRepositoryFactory,
+    ReadinessService,
     ResultRepositoryFactory,
 )
 from api.Validators.upload_metadata import UploadMetadataValidator
@@ -37,6 +39,7 @@ def create_app(
     storage: AudioStorage | None = None,
     media_probe: MediaProbe | None = None,
     upload_metadata_validator: UploadMetadataValidator | None = None,
+    readiness_service: ReadinessService | None = None,
     session_factory: AsyncSessionFactory | None = None,
     repository_factory: JobRepositoryFactory = JobRepository,
     job_read_repository_factory: JobReadRepositoryFactory = JobRepository,
@@ -92,6 +95,10 @@ def create_app(
     active_upload_validator = upload_metadata_validator or UploadMetadataValidator(
         active_settings.max_upload_size_bytes
     )
+    active_readiness_service = readiness_service or PostgresReadinessService(
+        resolve_session_factory(),
+        timeout_seconds=active_settings.readiness_timeout_seconds,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
@@ -113,5 +120,7 @@ def create_app(
     app.state.transcription_creation_service = active_service
     app.state.transcription_query_service = active_query_service
     app.state.upload_metadata_validator = active_upload_validator
+    app.state.readiness_service = active_readiness_service
     app.include_router(api_router)
+    app.include_router(health_router)
     return app

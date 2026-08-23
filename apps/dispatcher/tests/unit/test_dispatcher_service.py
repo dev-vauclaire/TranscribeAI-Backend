@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 
+import dispatcher.service as service_module
 from dispatcher.models import DispatchBatchResult, DispatchJobSnapshot
 from dispatcher.service import DispatcherService
 from transcribe_ai_shared import (
@@ -166,18 +167,39 @@ async def test_dispatch_batch_does_not_confirm_after_redis_failure(
 
     assert store.mark_calls == []
     assert result == DispatchBatchResult(1, 0, 0, 0, 1)
-    assert "RedisConnectionError" in caplog.text
+    failed_record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "dispatch_failed"
+    )
+    assert failed_record.service == "dispatcher"
+    assert failed_record.job_uuid == str(FIRST_JOB_UUID)
+    assert failed_record.attempt_count == 0
+    assert failed_record.error_type == "RedisConnectionError"
     assert "secret" not in caplog.text
 
 
-async def test_dispatch_batch_marks_dispatched_only_after_xadd() -> None:
+async def test_dispatch_batch_marks_dispatched_only_after_xadd(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     events: list[str] = []
     store = RecordingJobStore([make_job()], events=events)
     streams = RecordingStreams(events=events)
 
+    def record_event(_logger, _level: int, **context: object) -> None:
+        events.append(f"log:{context['event']}")
+
+    monkeypatch.setattr(service_module, "log_event", record_event)
+
     await make_service(store, streams).dispatch_batch(batch_size=1)
 
-    assert events == ["publish", "mark_dispatched"]
+    assert events == [
+        "log:dispatch_started",
+        "publish",
+        "log:redis_published",
+        "mark_dispatched",
+        "log:dispatched",
+    ]
 
 
 async def test_dispatch_batch_passes_the_complete_observed_snapshot() -> None:

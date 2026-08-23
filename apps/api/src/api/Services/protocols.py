@@ -43,3 +43,11 @@ class ResultReadRepository(Protocol):
 
 JobReadRepositoryFactory: TypeAlias = Callable[[AsyncSession], JobReadRepository]
 ResultRepositoryFactory: TypeAlias = Callable[[AsyncSession], ResultReadRepository]
+
+
+class ReadinessService(Protocol):
+    """Contrat du contrôle des dépendances indispensables à l'API."""
+
+    async def is_ready(self) -> bool:
+        """Indique si l'API peut traiter les requêtes dépendantes de PostgreSQL."""
+        ...
