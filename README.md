@@ -40,8 +40,14 @@ Il se compose de six applications et d'un package partagé entre elles.
 ## Tests
 
 ```bash
-uv run pytest
+uv run pytest -m unit
+uv run pytest -m integration
+uv run pytest -m system tests/system
 ```
+
+Les tests d'intégration et système nécessitent Docker. La suite système exige
+également `ffprobe` et valide le parcours complet HTTP, PostgreSQL, Redis,
+dispatcher, worker et stockage filesystem avec un transcriber déterministe.
 
 ## Hooks
 
