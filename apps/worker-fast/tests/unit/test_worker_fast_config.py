@@ -17,6 +17,9 @@ SETTING_ENV_NAMES = (
     "MAX_ATTEMPTS",
     "WORKER_ENVIRONMENT",
     "WORKER_TRANSCRIBER_BACKEND",
+    "WORKER_TRANSCRIBER_MODEL",
+    "WORKER_TRANSCRIBER_DEVICE",
+    "WORKER_TRANSCRIBER_COMPUTE_TYPE",
 )
 
 
@@ -26,11 +29,14 @@ def isolate_settings_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(environment_name, raising=False)
 
 
-def test_settings_default_to_production_without_a_transcriber_backend() -> None:
+def test_settings_default_to_the_low_latency_faster_whisper_backend() -> None:
     settings = WorkerFastSettings(worker_id="fast-1")
 
     assert settings.worker_environment == "production"
-    assert settings.worker_transcriber_backend is None
+    assert settings.worker_transcriber_backend == "faster-whisper"
+    assert settings.worker_transcriber_model == "large-v3-turbo"
+    assert settings.worker_transcriber_device == "cuda"
+    assert settings.worker_transcriber_compute_type == "float16"
     assert settings.worker_consumer_group == "transcription-workers"
     assert settings.worker_block_milliseconds == 5_000
     assert settings.worker_autoclaim_interval_seconds == 60
@@ -49,8 +55,11 @@ def test_settings_read_worker_environment_variables(
     monkeypatch.setenv("WORKER_LEASE_SECONDS", "120")
     monkeypatch.setenv("WORKER_HEARTBEAT_SECONDS", "30")
     monkeypatch.setenv("MAX_ATTEMPTS", "5")
-    monkeypatch.setenv("WORKER_ENVIRONMENT", "development")
-    monkeypatch.setenv("WORKER_TRANSCRIBER_BACKEND", "fake")
+    monkeypatch.setenv("WORKER_ENVIRONMENT", "production")
+    monkeypatch.setenv("WORKER_TRANSCRIBER_BACKEND", "faster-whisper")
+    monkeypatch.setenv("WORKER_TRANSCRIBER_MODEL", "small")
+    monkeypatch.setenv("WORKER_TRANSCRIBER_DEVICE", "cpu")
+    monkeypatch.setenv("WORKER_TRANSCRIBER_COMPUTE_TYPE", "int8")
 
     settings = WorkerFastSettings()
 
@@ -62,8 +71,11 @@ def test_settings_read_worker_environment_variables(
     assert settings.worker_lease_seconds == 120
     assert settings.worker_heartbeat_seconds == 30
     assert settings.max_attempts == 5
-    assert settings.worker_environment == "development"
-    assert settings.worker_transcriber_backend == "fake"
+    assert settings.worker_environment == "production"
+    assert settings.worker_transcriber_backend == "faster-whisper"
+    assert settings.worker_transcriber_model == "small"
+    assert settings.worker_transcriber_device == "cpu"
+    assert settings.worker_transcriber_compute_type == "int8"
 
 
 def test_fake_transcriber_is_rejected_outside_development() -> None:
@@ -72,4 +84,30 @@ def test_fake_transcriber_is_rejected_outside_development() -> None:
             worker_id="fast-1",
             worker_environment="production",
             worker_transcriber_backend="fake",
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("worker_transcriber_device", "tpu"),
+        ("worker_transcriber_compute_type", "float64"),
+    ],
+)
+def test_settings_reject_unsupported_engine_options(
+    field_name: str,
+    invalid_value: str,
+) -> None:
+    with pytest.raises(ValidationError):
+        WorkerFastSettings(
+            worker_id="fast-1",
+            **{field_name: invalid_value},
+        )
+
+
+def test_settings_reject_an_empty_model_name() -> None:
+    with pytest.raises(ValidationError):
+        WorkerFastSettings(
+            worker_id="fast-1",
+            worker_transcriber_model="   ",
         )

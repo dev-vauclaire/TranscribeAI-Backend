@@ -30,6 +30,7 @@ markers = [
     "unit: isolated tests without external services, including temporary filesystem tests",
     "integration: tests involving several components or external services",
     "system: complete workflows across real applications and external services",
+    "gpu: real ML inference requiring an explicitly configured NVIDIA GPU runner",
 ]
 
 [tool.ruff]

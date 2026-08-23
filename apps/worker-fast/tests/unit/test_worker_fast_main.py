@@ -1,18 +1,41 @@
 import logging
+from unittest.mock import Mock
 
 import pytest
 
 import worker_fast.main as main_module
 from transcribe_ai_shared.worker.testing import FakeTranscriber
 from worker_fast.config import WorkerFastSettings
+from worker_fast.transcribers import FasterWhisperTranscriber
 
 
 pytestmark = pytest.mark.unit
 
 
-def test_create_transcriber_requires_an_explicit_backend() -> None:
-    with pytest.raises(RuntimeError, match="Aucun backend"):
-        main_module._create_transcriber(WorkerFastSettings(worker_id="fast-1"))
+def test_create_transcriber_builds_the_configured_faster_whisper_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = Mock()
+    model_factory = Mock(return_value=model)
+    storage = Mock()
+    monkeypatch.setattr(main_module, "WhisperModel", model_factory)
+
+    transcriber = main_module._create_transcriber(
+        WorkerFastSettings(
+            worker_id="fast-1",
+            worker_transcriber_model="small",
+            worker_transcriber_device="cpu",
+            worker_transcriber_compute_type="int8",
+        ),
+        storage,
+    )
+
+    assert isinstance(transcriber, FasterWhisperTranscriber)
+    model_factory.assert_called_once_with(
+        "small",
+        device="cpu",
+        compute_type="int8",
+    )
 
 
 def test_create_transcriber_allows_fake_only_with_development_opt_in() -> None:
@@ -21,7 +44,8 @@ def test_create_transcriber_allows_fake_only_with_development_opt_in() -> None:
             worker_id="fast-1",
             worker_environment="development",
             worker_transcriber_backend="fake",
-        )
+        ),
+        Mock(),
     )
 
     assert isinstance(transcriber, FakeTranscriber)

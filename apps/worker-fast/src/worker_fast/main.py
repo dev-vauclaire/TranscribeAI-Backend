@@ -2,11 +2,17 @@ import asyncio
 import logging
 from typing import NoReturn
 
+from faster_whisper import WhisperModel
+
 from worker_fast.application import run
 from worker_fast.config import WorkerFastSettings
+from worker_fast.transcribers import FasterWhisperTranscriber
 from transcribe_ai_shared import (
+    AudioStorage,
     DatabaseSettings,
+    FileSystemAudioStorage,
     RedisSettings,
+    StorageSettings,
     Transcriber,
     WorkerIdle,
     WorkerProcessResult,
@@ -16,10 +22,19 @@ from transcribe_ai_shared import (
 LOGGER = logging.getLogger(__name__)
 
 
-def _create_transcriber(settings: WorkerFastSettings) -> Transcriber:
-    """Construit uniquement le fake explicitement autorisé pour le développement."""
-    if settings.worker_transcriber_backend != "fake":
-        raise RuntimeError("Aucun backend de transcription FAST n'est configuré")
+def _create_transcriber(
+    settings: WorkerFastSettings,
+    storage: AudioStorage,
+) -> Transcriber:
+    """Construit une seule instance du moteur configuré pour tout le processus."""
+    if settings.worker_transcriber_backend == "faster-whisper":
+        model = WhisperModel(
+            settings.worker_transcriber_model,
+            device=settings.worker_transcriber_device,
+            compute_type=settings.worker_transcriber_compute_type,
+        )
+        return FasterWhisperTranscriber(model=model, storage=storage)
+
     if settings.worker_environment != "development":
         raise RuntimeError("Le backend fake est réservé au développement")
 
@@ -40,11 +55,13 @@ def _log_result(result: WorkerProcessResult) -> None:
 
 async def _run_from_environment() -> NoReturn:
     settings = WorkerFastSettings()
+    storage_settings = StorageSettings()
+    storage = FileSystemAudioStorage(storage_settings.audio_storage_path)
     await run(
         database_settings=DatabaseSettings(),
         redis_settings=RedisSettings(),
         worker_settings=settings,
-        transcriber=_create_transcriber(settings),
+        transcriber=_create_transcriber(settings, storage),
         on_result=_log_result,
     )
 
