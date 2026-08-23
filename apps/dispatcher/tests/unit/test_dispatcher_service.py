@@ -121,7 +121,10 @@ async def test_dispatch_batch_returns_empty_result_when_no_job_is_available() ->
     assert store.mark_calls == []
 
 
-@pytest.mark.parametrize("job_type", [JobType.FAST, JobType.BATCH])
+@pytest.mark.parametrize(
+    "job_type",
+    [JobType.FAST, JobType.LONG_FORM_DIARIZATION],
+)
 async def test_dispatch_batch_publishes_to_the_stream_selected_by_job_type(
     job_type: JobType,
 ) -> None:
@@ -191,7 +194,7 @@ async def test_dispatch_batch_continues_after_one_job_fails() -> None:
     first_job = make_job()
     second_job = make_job(
         job_uuid=SECOND_JOB_UUID,
-        job_type=JobType.BATCH,
+        job_type=JobType.LONG_FORM_DIARIZATION,
     )
     store = RecordingJobStore([first_job, second_job])
     streams = RecordingStreams(

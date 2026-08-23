@@ -66,9 +66,9 @@ les conditions suivantes :
 - `dispatch_required = true`.
 
 Pour chaque job sélectionné, il publie `job_uuid` et `attempt_count` dans
-`transcription:fast` ou `transcription:batch` selon son type. La confirmation
-PostgreSQL n'est exécutée qu'après le succès de `XADD` et utilise
-`attempt_count` comme garde de concurrence.
+`transcription:fast` ou `transcription:long-form-diarization` selon son type.
+La confirmation PostgreSQL n'est exécutée qu'après le succès de `XADD` et
+utilise `attempt_count` comme garde de concurrence.
 
 Les publications sont intentionnellement **at-least-once** : si Redis accepte
 le message mais que la confirmation PostgreSQL échoue, le job reste éligible

@@ -55,7 +55,10 @@ def test_upgrade_0001_initial_schema_from_base(
         "FAILED",
     ]
     assert isinstance(job_columns["job_type"]["type"], ENUM)
-    assert job_columns["job_type"]["type"].enums == ["FAST", "BATCH"]
+    assert job_columns["job_type"]["type"].enums == [
+        "FAST",
+        "LONG_FORM_DIARIZATION",
+    ]
     assert isinstance(job_columns["dispatch_required"]["type"], Boolean)
     assert job_columns["dispatch_required"]["nullable"] is False
     assert (

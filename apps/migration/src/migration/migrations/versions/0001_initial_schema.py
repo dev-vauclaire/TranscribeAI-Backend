@@ -29,7 +29,7 @@ job_status_enum = postgresql.ENUM(
 )
 job_type_enum = postgresql.ENUM(
     "FAST",
-    "BATCH",
+    "LONG_FORM_DIARIZATION",
     name="transcription_job_type",
     create_type=False,
 )

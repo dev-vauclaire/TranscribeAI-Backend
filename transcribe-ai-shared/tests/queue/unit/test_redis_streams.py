@@ -83,7 +83,10 @@ async def test_configures_async_redis_client(redis_streams):
     ("job_type", "expected_stream"),
     [
         (JobType.FAST, "transcription:fast"),
-        (JobType.BATCH, "transcription:batch"),
+        (
+            JobType.LONG_FORM_DIARIZATION,
+            "transcription:long-form-diarization",
+        ),
     ],
 )
 async def test_publish_routes_and_serializes_job(
@@ -182,7 +185,11 @@ async def test_consume_returns_none_when_no_new_message(redis_streams):
     streams, client, _ = redis_streams
     client.xreadgroup.return_value = []
 
-    result = await streams.consume(JobType.BATCH, "workers", "worker-a")
+    result = await streams.consume(
+        JobType.LONG_FORM_DIARIZATION,
+        "workers",
+        "worker-a",
+    )
 
     assert result is None
 
@@ -281,7 +288,7 @@ async def test_autoclaim_accepts_two_part_response_from_older_client(
     client.xautoclaim.return_value = ["0-0", []]
 
     result = await streams.autoclaim(
-        JobType.BATCH,
+        JobType.LONG_FORM_DIARIZATION,
         "workers",
         "worker-b",
         min_idle_milliseconds=0,

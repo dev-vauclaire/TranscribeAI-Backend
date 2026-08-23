@@ -20,13 +20,13 @@ des appels est `Routes -> Controllers -> Services -> Repositories/Storage`.
   appelle la prévalidation propre à l'upload, invoque un service, puis construit
   le statut, les en-têtes et le corps de la réponse.
 - `Services` porte les use cases et orchestre stockage, inspection média,
-  règles FAST/BATCH et transaction PostgreSQL.
+  règles FAST/LONG_FORM_DIARIZATION et transaction PostgreSQL.
 - `Validators` filtre les métadonnées HTTP déclarées (`filename`, taille et
   MIME). Cette validation rapide ne prouve jamais l'authenticité du média.
 - `Media` encapsule `ffprobe` et transforme le contenu réel en métadonnées
   internes (`AudioMetadata`).
 - `Storage` persiste physiquement les octets. Il ne porte aucune règle HTTP ou
-  FAST/BATCH.
+  FAST/LONG_FORM_DIARIZATION.
 - `Helpers`, lorsqu'il existe, est réservé aux fonctions pures, triviales et
   génériques. Aucune règle métier ou infrastructure ne doit y être dissimulée.
 
@@ -45,7 +45,7 @@ La requête utilise `multipart/form-data` avec deux champs :
 | Champ | Type | Valeurs |
 | --- | --- | --- |
 | `audio_file` | fichier | WAV, MP3, OGG ou M4A |
-| `type` | chaîne | `FAST` ou `BATCH` |
+| `type` | chaîne | `FAST` ou `LONG_FORM_DIARIZATION` |
 
 Exemple :
 
@@ -69,9 +69,9 @@ Le controller vérifie d'abord la taille, le nom, l'extension et le MIME déclar
 Ces valeurs viennent du client et ne sont qu'un filtre rapide. Le flux est
 ensuite enregistré sans chargement complet en mémoire. `ffprobe` inspecte le
 contenu stocké, identifie conteneur, codec et durée, puis le service vérifie la
-cohérence du format et applique la limite du type FAST ou BATCH. Il crée enfin,
-dans une transaction PostgreSQL, un `TranscriptionJob` avec `status=QUEUED` et
-`dispatch_required=true`.
+cohérence du format et applique la limite du type FAST ou
+LONG_FORM_DIARIZATION. Il crée enfin, dans une transaction PostgreSQL, un
+`TranscriptionJob` avec `status=QUEUED` et `dispatch_required=true`.
 
 Les couples conteneur/codec acceptés sont volontairement explicites :
 
@@ -159,7 +159,7 @@ données ni la sortie brute de `ffprobe`.
 | `FFPROBE_PATH` | non | `ffprobe` | Nom ou chemin du binaire d'inspection |
 | `FFPROBE_TIMEOUT_SECONDS` | non | `30` | Délai maximal de l'inspection ffprobe |
 | `API_FAST_MAX_DURATION_SECONDS` | non | `900` | Durée maximale FAST (15 minutes) |
-| `API_BATCH_MAX_DURATION_SECONDS` | non | `14400` | Durée maximale BATCH (4 heures) |
+| `API_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS` | non | `14400` | Durée maximale avec diarisation (4 heures) |
 | `API_HOST` | non | `127.0.0.1` | Interface d'écoute Uvicorn |
 | `API_PORT` | non | `8000` | Port d'écoute Uvicorn |
 

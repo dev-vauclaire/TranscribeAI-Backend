@@ -27,7 +27,7 @@ Il se compose de six applications et d'un package partagé entre elles.
 - [Maintenance](apps/maintenance/README.md)
 - [Migration](apps/migration/README.md)
 - [Worker fast](apps/worker-fast/README.md)
-- [Worker batch](apps/worker-batch/README.md)
+- [Worker long-form diarization](apps/worker-long-form-diarization/README.md)
 - [Shared](transcribe-ai-shared/README.md)
 
 ### Stack technique

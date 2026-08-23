@@ -11,7 +11,7 @@ from .conftest import RedisStreamsTestContext
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 FAST_STREAM = "transcription:fast"
-BATCH_STREAM = "transcription:batch"
+LONG_FORM_DIARIZATION_STREAM = "transcription:long-form-diarization"
 GROUP_NAME = "transcription-workers"
 JOB_UUID = UUID("12345678-1234-5678-1234-567812345678")
 SECOND_JOB_UUID = UUID("87654321-4321-8765-4321-876543218765")
@@ -46,7 +46,7 @@ async def test_publish_adds_the_exact_job_payload_to_the_expected_stream(
             },
         )
     ]
-    assert await redis_streams_context.client.exists(BATCH_STREAM) == 0
+    assert await redis_streams_context.client.exists(LONG_FORM_DIARIZATION_STREAM) == 0
 
 
 async def test_ensure_consumer_group_is_idempotent_and_creates_the_stream(
@@ -131,16 +131,19 @@ async def test_ack_and_delete_removes_the_pending_entry_and_stream_message(
     assert await redis_streams_context.client.xrange(FAST_STREAM) == []
 
 
-async def test_fast_and_batch_jobs_remain_isolated(
+async def test_fast_and_long_form_diarization_jobs_remain_isolated(
     redis_streams_context: RedisStreamsTestContext,
 ) -> None:
     streams = redis_streams_context.streams
     await streams.ensure_consumer_group(JobType.FAST, GROUP_NAME)
-    await streams.ensure_consumer_group(JobType.BATCH, GROUP_NAME)
+    await streams.ensure_consumer_group(
+        JobType.LONG_FORM_DIARIZATION,
+        GROUP_NAME,
+    )
     fast_redis_id = await streams.publish(make_message(JobType.FAST))
-    batch_redis_id = await streams.publish(
+    long_form_diarization_redis_id = await streams.publish(
         make_message(
-            JobType.BATCH,
+            JobType.LONG_FORM_DIARIZATION,
             job_uuid=SECOND_JOB_UUID,
             attempt_count=4,
         )
@@ -152,10 +155,10 @@ async def test_fast_and_batch_jobs_remain_isolated(
         "fast-worker",
         block_milliseconds=100,
     )
-    batch_message = await streams.consume(
-        JobType.BATCH,
+    long_form_diarization_message = await streams.consume(
+        JobType.LONG_FORM_DIARIZATION,
         GROUP_NAME,
-        "batch-worker",
+        "long-form-diarization-worker",
         block_milliseconds=100,
     )
 
@@ -163,10 +166,12 @@ async def test_fast_and_batch_jobs_remain_isolated(
     assert fast_message.redis_message_id == fast_redis_id
     assert fast_message.job_uuid == JOB_UUID
     assert fast_message.job_type is JobType.FAST
-    assert batch_message is not None
-    assert batch_message.redis_message_id == batch_redis_id
-    assert batch_message.job_uuid == SECOND_JOB_UUID
-    assert batch_message.job_type is JobType.BATCH
+    assert long_form_diarization_message is not None
+    assert (
+        long_form_diarization_message.redis_message_id == long_form_diarization_redis_id
+    )
+    assert long_form_diarization_message.job_uuid == SECOND_JOB_UUID
+    assert long_form_diarization_message.job_type is JobType.LONG_FORM_DIARIZATION
 
 
 async def test_two_consumers_in_one_group_receive_distinct_new_messages(

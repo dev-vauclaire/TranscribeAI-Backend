@@ -610,7 +610,7 @@ async def test_recovered_message_from_another_stream_is_rejected_without_ack() -
     message = ReceivedJobStreamMessage(
         redis_message_id=REDIS_MESSAGE_ID,
         job_uuid=JOB_UUID,
-        job_type=JobType.BATCH,
+        job_type=JobType.LONG_FORM_DIARIZATION,
         attempt_count=2,
     )
     streams = RecordingStreams(message)
@@ -627,7 +627,7 @@ async def test_recovered_message_from_another_stream_is_rejected_without_ack() -
         ).process_next()
 
     assert raised.value.expected_job_type is JobType.FAST
-    assert raised.value.actual_job_type is JobType.BATCH
+    assert raised.value.actual_job_type is JobType.LONG_FORM_DIARIZATION
     assert store.claim_calls == []
     assert transcriber.calls == ()
     assert completer.calls == []

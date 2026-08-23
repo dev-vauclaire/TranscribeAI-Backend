@@ -22,7 +22,10 @@ def test_job_enums_match_shared_contract():
         "COMPLETED",
         "FAILED",
     ]
-    assert [job_type.value for job_type in JobType] == ["FAST", "BATCH"]
+    assert [job_type.value for job_type in JobType] == [
+        "FAST",
+        "LONG_FORM_DIARIZATION",
+    ]
 
 
 def test_transcription_job_can_be_constructed():

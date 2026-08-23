@@ -32,9 +32,10 @@ async def run_worker(
 
     Le moteur PostgreSQL et le client Redis appartiennent à cette invocation :
     ils sont donc fermés ici, y compris lorsque le claim ou le transcriber
-    échoue. Les applications FAST et BATCH ne choisissent que ``job_type`` et
-    leur implémentation de ``Transcriber``. La boucle reste ici afin que ces
-    ressources et le futur modèle ML soient conservés entre deux messages.
+    échoue. Les applications FAST et LONG_FORM_DIARIZATION ne choisissent que
+    ``job_type`` et leur implémentation de ``Transcriber``. La boucle reste ici
+    afin que ces ressources et le futur modèle ML soient conservés entre deux
+    messages.
     """
     engine = create_async_db_engine(database_settings)
     try:

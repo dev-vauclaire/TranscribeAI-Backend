@@ -1,14 +1,14 @@
 import pytest
 
-import worker_batch.application as application
+import worker_long_form_diarization.application as application
 from transcribe_ai_shared import DatabaseSettings, JobType, RedisSettings
-from worker_batch.config import WorkerBatchSettings
+from worker_long_form_diarization.config import WorkerLongFormDiarizationSettings
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
-async def test_run_delegates_to_the_shared_runtime_with_batch_type(
+async def test_run_delegates_to_runtime_with_long_form_diarization_type(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, object] = {}
@@ -28,7 +28,9 @@ async def test_run_delegates_to_the_shared_runtime_with_batch_type(
         url="postgresql://postgres:postgres@localhost/postgres"
     )
     redis_settings = RedisSettings(redis_url="redis://localhost:6379/0")
-    worker_settings = WorkerBatchSettings(worker_id="batch-1")
+    worker_settings = WorkerLongFormDiarizationSettings(
+        worker_id="long-form-diarization-1"
+    )
 
     with pytest.raises(StopWorker):
         await application.run(
@@ -43,5 +45,5 @@ async def test_run_delegates_to_the_shared_runtime_with_batch_type(
     assert captured["redis_settings"] is redis_settings
     assert captured["worker_settings"] is worker_settings
     assert captured["transcriber"] is transcriber
-    assert captured["job_type"] is JobType.BATCH
+    assert captured["job_type"] is JobType.LONG_FORM_DIARIZATION
     assert captured["on_result"] is on_result

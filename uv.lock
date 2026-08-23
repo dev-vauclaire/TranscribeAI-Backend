@@ -9,8 +9,8 @@ members = [
     "maintenance",
     "migration",
     "transcribe-ai-shared",
-    "worker-batch",
     "worker-fast",
+    "worker-long-form-diarization",
 ]
 
 [manifest.dependency-groups]
@@ -1371,21 +1371,6 @@ wheels = [
 ]
 
 [[package]]
-name = "worker-batch"
-version = "0.1.0"
-source = { editable = "apps/worker-batch" }
-dependencies = [
-    { name = "pydantic" },
-    { name = "transcribe-ai-shared" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pydantic", specifier = ">=2.13.4,<3" },
-    { name = "transcribe-ai-shared", editable = "transcribe-ai-shared" },
-]
-
-[[package]]
 name = "worker-fast"
 version = "0.1.0"
 source = { editable = "apps/worker-fast" }
@@ -1410,6 +1395,21 @@ requires-dist = [
     { name = "transcribe-ai-shared", editable = "transcribe-ai-shared" },
 ]
 provides-extras = ["gpu"]
+
+[[package]]
+name = "worker-long-form-diarization"
+version = "0.1.0"
+source = { editable = "apps/worker-long-form-diarization" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "transcribe-ai-shared" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.13.4,<3" },
+    { name = "transcribe-ai-shared", editable = "transcribe-ai-shared" },
+]
 
 [[package]]
 name = "wrapt"

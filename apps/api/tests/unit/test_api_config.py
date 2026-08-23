@@ -7,8 +7,8 @@ from pydantic import ValidationError
 
 from api.config import (
     ApiSettings,
-    DEFAULT_BATCH_MAX_DURATION_SECONDS,
     DEFAULT_FAST_MAX_DURATION_SECONDS,
+    DEFAULT_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS,
     DEFAULT_MAX_UPLOAD_SIZE_BYTES,
 )
 
@@ -25,7 +25,7 @@ def isolate_api_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "FFPROBE_PATH",
         "FFPROBE_TIMEOUT_SECONDS",
         "API_FAST_MAX_DURATION_SECONDS",
-        "API_BATCH_MAX_DURATION_SECONDS",
+        "API_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS",
     ):
         monkeypatch.delenv(variable, raising=False)
         monkeypatch.delenv(variable.lower(), raising=False)
@@ -42,9 +42,9 @@ def test_api_settings_use_documented_duration_defaults() -> None:
     settings = ApiSettings()
 
     assert DEFAULT_FAST_MAX_DURATION_SECONDS == Decimal("900")
-    assert DEFAULT_BATCH_MAX_DURATION_SECONDS == Decimal("14400")
+    assert DEFAULT_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS == Decimal("14400")
     assert settings.fast_max_duration_seconds == Decimal("900")
-    assert settings.batch_max_duration_seconds == Decimal("14400")
+    assert settings.long_form_diarization_max_duration_seconds == Decimal("14400")
 
 
 def test_api_settings_override_upload_limit_from_environment(
@@ -70,19 +70,19 @@ def test_api_settings_override_duration_limits_from_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("API_FAST_MAX_DURATION_SECONDS", "120.5")
-    monkeypatch.setenv("API_BATCH_MAX_DURATION_SECONDS", "7200")
+    monkeypatch.setenv("API_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS", "7200")
 
     settings = ApiSettings()
 
     assert settings.fast_max_duration_seconds == Decimal("120.5")
-    assert settings.batch_max_duration_seconds == Decimal("7200")
+    assert settings.long_form_diarization_max_duration_seconds == Decimal("7200")
 
 
-def test_api_settings_reject_fast_limit_above_batch_limit() -> None:
+def test_api_settings_reject_fast_limit_above_long_form_diarization_limit() -> None:
     with pytest.raises(ValidationError):
         ApiSettings(
             fast_max_duration_seconds=Decimal("61"),
-            batch_max_duration_seconds=Decimal("60"),
+            long_form_diarization_max_duration_seconds=Decimal("60"),
         )
 
 

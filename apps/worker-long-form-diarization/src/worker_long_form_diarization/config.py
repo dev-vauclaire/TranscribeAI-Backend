@@ -5,8 +5,8 @@ from pydantic import model_validator
 from transcribe_ai_shared import WorkerSettings
 
 
-class WorkerBatchSettings(WorkerSettings):
-    """Configuration du worker BATCH et du backend injecté au runtime."""
+class WorkerLongFormDiarizationSettings(WorkerSettings):
+    """Configuration du worker de transcription longue avec diarisation."""
 
     worker_environment: Literal["development", "production"] = "production"
     worker_transcriber_backend: Literal["fake"] | None = None

@@ -52,26 +52,28 @@ class CreateTranscriptionService:
         media_probe: MediaProbe,
         session_factory: AsyncSessionFactory,
         fast_max_duration_seconds: Decimal,
-        batch_max_duration_seconds: Decimal,
+        long_form_diarization_max_duration_seconds: Decimal,
         repository_factory: JobRepositoryFactory = JobRepository,
     ) -> None:
         if (
             not isinstance(fast_max_duration_seconds, Decimal)
-            or not isinstance(batch_max_duration_seconds, Decimal)
+            or not isinstance(long_form_diarization_max_duration_seconds, Decimal)
             or not fast_max_duration_seconds.is_finite()
-            or not batch_max_duration_seconds.is_finite()
+            or not long_form_diarization_max_duration_seconds.is_finite()
             or fast_max_duration_seconds <= 0
-            or batch_max_duration_seconds <= 0
+            or long_form_diarization_max_duration_seconds <= 0
         ):
             raise ValueError("Les limites de durée doivent être positives et finies.")
-        if fast_max_duration_seconds > batch_max_duration_seconds:
-            raise ValueError("La limite FAST ne peut pas dépasser la limite BATCH.")
+        if fast_max_duration_seconds > long_form_diarization_max_duration_seconds:
+            raise ValueError(
+                "La limite FAST ne peut pas dépasser la limite LONG_FORM_DIARIZATION."
+            )
         self._storage = storage
         self._media_probe = media_probe
         self._session_factory = session_factory
         self._duration_limits = {
             JobType.FAST: fast_max_duration_seconds,
-            JobType.BATCH: batch_max_duration_seconds,
+            JobType.LONG_FORM_DIARIZATION: long_form_diarization_max_duration_seconds,
         }
         self._repository_factory = repository_factory
 

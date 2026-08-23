@@ -121,11 +121,12 @@ persisté dans `TranscriptionJob.audio_uri`.
 
 - `TranscriptionStreams` définit les primitives asynchrones communes au
   dispatcher et aux workers sans contenir leur boucle métier.
-- `RedisTranscriptionStreams` publie les jobs FAST dans
-  `transcription:fast` et les jobs BATCH dans `transcription:batch`. Le payload
-  contient uniquement `job_uuid` et `attempt_count`; le type est porté par le
-  stream. Les groupes sont créés depuis `0-0` avec `MKSTREAM`, afin de rendre
-  visibles les messages publiés avant leur création.
+- `RedisTranscriptionStreams` publie les jobs FAST dans `transcription:fast` et
+  les jobs LONG_FORM_DIARIZATION dans
+  `transcription:long-form-diarization`. Le payload contient uniquement
+  `job_uuid` et `attempt_count`; le type est porté par le stream. Les groupes
+  sont créés depuis `0-0` avec `MKSTREAM`, afin de rendre visibles les messages
+  publiés avant leur création.
 - `ack_and_delete` utilise nativement `XACKDEL`. Le projet cible Redis 8.10.1,
   tandis que cette commande est disponible à partir de Redis 8.2. La politique
   `KEEPREF` suppose un seul consumer group métier par stream, avec autant de
@@ -134,13 +135,15 @@ persisté dans `TranscriptionJob.audio_uri`.
   métier ni de la valeur de `TranscriptionJob.attempt_count`. Chaque worker
   balaie immédiatement puis périodiquement le PEL de son propre stream, un
   message à la fois. `WORKER_AUTOCLAIM_MIN_IDLE_MILLISECONDS` limite seulement
-  la fréquence de réattribution Redis : même pour un job BATCH très long,
-  l'idle Redis ne prouve jamais un crash. `COUNT 1` évite qu'un worker séquentiel
-  ne précharge plusieurs longues inférences ; en contrepartie, chaque worker ne
-  nettoie au maximum qu'un ancien message par intervalle configurable.
+  la fréquence de réattribution Redis : même pour un job
+  LONG_FORM_DIARIZATION très long, l'idle Redis ne prouve jamais un crash.
+  `COUNT 1` évite qu'un worker séquentiel ne précharge plusieurs longues
+  inférences ; en contrepartie, chaque worker ne nettoie au maximum qu'un
+  ancien message par intervalle configurable.
 - Le point de composition qui crée un `TranscriptionStreams` doit appeler
   `aclose()` lors de son arrêt afin de libérer le pool de connexions Redis.
-- `WorkerRuntime` orchestre une seule itération commune à FAST et BATCH :
+- `WorkerRuntime` orchestre une seule itération commune à FAST et
+  LONG_FORM_DIARIZATION :
   récupération éventuelle d'un ancien pending ou consommation d'un nouveau
   message, décision PostgreSQL atomique, appel du `Transcriber`, transition
   PostgreSQL terminale ou de retry, puis ACK Redis. `run_worker` porte la

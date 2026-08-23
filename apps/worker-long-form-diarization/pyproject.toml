@@ -1,7 +1,7 @@
 [project]
-name = "worker-batch"
+name = "worker-long-form-diarization"
 version = "0.1.0"
-description = "Worker consommant les jobs du stream de transcription BATCH"
+description = "Worker pour les transcriptions longues avec diarisation"
 readme = "README.md"
 authors = [
     { name = "dev-vauclaire", email = "dev@ch-vauclaire.fr" }
@@ -16,7 +16,7 @@ dependencies = [
 transcribe-ai-shared = { workspace = true }
 
 [project.scripts]
-worker-batch = "worker_batch.main:main"
+worker-long-form-diarization = "worker_long_form_diarization.main:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

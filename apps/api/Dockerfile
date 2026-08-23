@@ -23,7 +23,7 @@ ENV PATH="/opt/api/.venv/bin:$PATH" \
     FFPROBE_PATH=ffprobe \
     FFPROBE_TIMEOUT_SECONDS=30 \
     API_FAST_MAX_DURATION_SECONDS=900 \
-    API_BATCH_MAX_DURATION_SECONDS=14400
+    API_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS=14400
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
@@ -39,6 +39,8 @@ WORKDIR /opt/api
 
 COPY --from=builder /opt/api/.venv /opt/api/.venv
 
+# The named user is created above and keeps the runtime intent explicit.
+# hadolint ignore=DL3066
 USER api
 
 EXPOSE 8000

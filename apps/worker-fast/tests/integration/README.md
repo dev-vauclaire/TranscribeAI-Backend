@@ -1,6 +1,7 @@
 # Tests d'intégration des workers
 
-La mécanique Redis Streams et le claim PostgreSQL sont communs à FAST et BATCH.
+La mécanique Redis Streams et le claim PostgreSQL sont communs aux profils
+FAST et LONG_FORM_DIARIZATION.
 Leurs tests d'intégration vivent donc dans :
 
 ```text

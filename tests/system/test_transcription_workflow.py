@@ -152,7 +152,11 @@ async def _load_persisted_state(
     ("job_type", "duplicate_message"),
     [
         pytest.param(JobType.FAST, True, id="fast-with-duplicate"),
-        pytest.param(JobType.BATCH, False, id="batch"),
+        pytest.param(
+            JobType.LONG_FORM_DIARIZATION,
+            False,
+            id="long-form-diarization",
+        ),
     ],
 )
 async def test_complete_transcription_workflow(
@@ -239,7 +243,9 @@ async def test_complete_transcription_workflow(
             )
 
         stream_name = stream_name_for_job_type(job_type)
-        other_job_type = JobType.BATCH if job_type is JobType.FAST else JobType.FAST
+        other_job_type = (
+            JobType.LONG_FORM_DIARIZATION if job_type is JobType.FAST else JobType.FAST
+        )
         other_stream_name = stream_name_for_job_type(other_job_type)
         expected_message_count = 2 if duplicate_message else 1
         entries = await system_redis.client.xrange(stream_name)

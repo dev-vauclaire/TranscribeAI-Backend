@@ -4,8 +4,8 @@ members = [
     "apps/dispatcher",
     "apps/maintenance",
     "apps/migration",
-    "apps/worker-batch",
     "apps/worker-fast",
+    "apps/worker-long-form-diarization",
     "transcribe-ai-shared",
 ]
 

@@ -107,7 +107,7 @@ async def system_api_client(
             ffprobe_path="ffprobe",
             ffprobe_timeout_seconds=5,
             fast_max_duration_seconds=Decimal("60"),
-            batch_max_duration_seconds=Decimal("3600"),
+            long_form_diarization_max_duration_seconds=Decimal("3600"),
         ),
         storage=system_audio_storage,
         session_factory=async_session_factory,

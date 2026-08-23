@@ -74,7 +74,9 @@ def create_app(
             media_probe=active_probe,
             session_factory=resolve_session_factory(),
             fast_max_duration_seconds=active_settings.fast_max_duration_seconds,
-            batch_max_duration_seconds=active_settings.batch_max_duration_seconds,
+            long_form_diarization_max_duration_seconds=(
+                active_settings.long_form_diarization_max_duration_seconds
+            ),
             repository_factory=repository_factory,
         )
 

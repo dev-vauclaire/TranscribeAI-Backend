@@ -36,7 +36,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 AUDIO_CONTENT = b"valid audio bytes"
 FAST_LIMIT = Decimal("60")
-BATCH_LIMIT = Decimal("3600")
+LONG_FORM_DIARIZATION_LIMIT = Decimal("3600")
 
 
 @pytest.fixture(autouse=True)
@@ -148,7 +148,7 @@ def build_service_harness(
             media_probe=media_probe,
             session_factory=session_factory,  # type: ignore[arg-type]
             fast_max_duration_seconds=FAST_LIMIT,
-            batch_max_duration_seconds=BATCH_LIMIT,
+            long_form_diarization_max_duration_seconds=(LONG_FORM_DIARIZATION_LIMIT),
             repository_factory=repository_factory,
         ),
         storage=storage,
@@ -176,9 +176,12 @@ def persisted_job(harness: ServiceHarness) -> TranscriptionJob:
 
 @pytest.mark.parametrize(
     ("job_type", "duration"),
-    [(JobType.FAST, FAST_LIMIT), (JobType.BATCH, BATCH_LIMIT)],
+    [
+        (JobType.FAST, FAST_LIMIT),
+        (JobType.LONG_FORM_DIARIZATION, LONG_FORM_DIARIZATION_LIMIT),
+    ],
 )
-async def test_create_persists_a_queued_job_for_fast_and_batch(
+async def test_create_persists_a_queued_job_for_each_transcription_profile(
     job_type: JobType,
     duration: Decimal,
 ) -> None:
@@ -215,7 +218,10 @@ async def test_create_persists_a_queued_job_for_fast_and_batch(
 
 @pytest.mark.parametrize(
     ("job_type", "limit"),
-    [(JobType.FAST, FAST_LIMIT), (JobType.BATCH, BATCH_LIMIT)],
+    [
+        (JobType.FAST, FAST_LIMIT),
+        (JobType.LONG_FORM_DIARIZATION, LONG_FORM_DIARIZATION_LIMIT),
+    ],
 )
 async def test_create_rejects_audio_above_the_job_type_duration_limit(
     job_type: JobType,
@@ -439,7 +445,7 @@ async def test_create_preserves_audio_when_commit_verification_is_unavailable() 
 
 
 @pytest.mark.parametrize(
-    ("fast_limit", "batch_limit"),
+    ("fast_limit", "long_form_diarization_limit"),
     [
         (Decimal("NaN"), Decimal("60")),
         (Decimal("1"), Decimal("Infinity")),
@@ -449,7 +455,7 @@ async def test_create_preserves_audio_when_commit_verification_is_unavailable() 
 )
 async def test_service_rejects_invalid_duration_configuration(
     fast_limit: Decimal,
-    batch_limit: Decimal,
+    long_form_diarization_limit: Decimal,
 ) -> None:
     storage = create_autospec(AudioStorage, instance=True)
     media_probe = create_autospec(MediaProbe, instance=True)
@@ -460,5 +466,5 @@ async def test_service_rejects_invalid_duration_configuration(
             media_probe=media_probe,
             session_factory=MagicMock(),  # type: ignore[arg-type]
             fast_max_duration_seconds=fast_limit,
-            batch_max_duration_seconds=batch_limit,
+            long_form_diarization_max_duration_seconds=(long_form_diarization_limit),
         )

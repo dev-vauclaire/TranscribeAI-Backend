@@ -23,7 +23,7 @@ from transcribe_ai_shared import (
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 FAST_STREAM = "transcription:fast"
-BATCH_STREAM = "transcription:batch"
+LONG_FORM_DIARIZATION_STREAM = "transcription:long-form-diarization"
 NOW = datetime(2026, 8, 21, 12, tzinfo=UTC)
 
 
@@ -148,7 +148,7 @@ async def test_dispatch_batch_publishes_only_eligible_jobs_to_matching_stream(
     dispatcher_redis: DispatcherRedisContext,
 ) -> None:
     first_fast_uuid = UUID("00000000-0000-0000-0000-000000000001")
-    batch_uuid = UUID("00000000-0000-0000-0000-000000000002")
+    long_form_diarization_uuid = UUID("00000000-0000-0000-0000-000000000002")
     second_fast_uuid = UUID("00000000-0000-0000-0000-000000000003")
     already_dispatched_uuid = UUID("00000000-0000-0000-0000-000000000004")
     processing_uuid = UUID("00000000-0000-0000-0000-000000000005")
@@ -160,8 +160,8 @@ async def test_dispatch_batch_publishes_only_eligible_jobs_to_matching_stream(
             created_at=NOW - timedelta(minutes=5),
         ),
         make_job(
-            batch_uuid,
-            JobType.BATCH,
+            long_form_diarization_uuid,
+            JobType.LONG_FORM_DIARIZATION,
             attempt_count=2,
             created_at=NOW - timedelta(minutes=4),
         ),
@@ -179,9 +179,9 @@ async def test_dispatch_batch_publishes_only_eligible_jobs_to_matching_stream(
         ),
         make_job(
             processing_uuid,
-            JobType.BATCH,
+            JobType.LONG_FORM_DIARIZATION,
             status=JobStatus.PROCESSING,
-            lease_owner="batch-worker",
+            lease_owner="long-form-diarization-worker",
             lease_expires_at=NOW + timedelta(minutes=5),
             created_at=NOW - timedelta(minutes=10),
         ),
@@ -195,24 +195,30 @@ async def test_dispatch_batch_publishes_only_eligible_jobs_to_matching_stream(
     await service.dispatch_batch(10)
 
     fast_entries = await dispatcher_redis.client.xrange(FAST_STREAM)
-    batch_entries = await dispatcher_redis.client.xrange(BATCH_STREAM)
+    long_form_diarization_entries = await dispatcher_redis.client.xrange(
+        LONG_FORM_DIARIZATION_STREAM
+    )
     assert [payload for _, payload in fast_entries] == [
         {"job_uuid": str(first_fast_uuid), "attempt_count": "0"},
         {"job_uuid": str(second_fast_uuid), "attempt_count": "1"},
     ]
-    assert [payload for _, payload in batch_entries] == [
-        {"job_uuid": str(batch_uuid), "attempt_count": "2"},
+    assert [payload for _, payload in long_form_diarization_entries] == [
+        {"job_uuid": str(long_form_diarization_uuid), "attempt_count": "2"},
     ]
 
     saved = await load_jobs(
         async_session_factory,
         first_fast_uuid,
-        batch_uuid,
+        long_form_diarization_uuid,
         second_fast_uuid,
         already_dispatched_uuid,
         processing_uuid,
     )
-    for job_uuid in (first_fast_uuid, batch_uuid, second_fast_uuid):
+    for job_uuid in (
+        first_fast_uuid,
+        long_form_diarization_uuid,
+        second_fast_uuid,
+    ):
         assert saved[job_uuid].dispatch_required is False
         assert saved[job_uuid].last_dispatched_at is not None
 
@@ -280,7 +286,11 @@ async def test_stale_attempt_cannot_clear_dispatch_required_after_requeue(
     job_uuid = UUID("20000000-0000-0000-0000-000000000001")
     await persist_jobs(
         async_session_factory,
-        make_job(job_uuid, JobType.BATCH, attempt_count=0),
+        make_job(
+            job_uuid,
+            JobType.LONG_FORM_DIARIZATION,
+            attempt_count=0,
+        ),
     )
     stale_store = RequeueBeforeMarkStore(
         PostgresDispatchJobStore(async_session_factory),
@@ -294,7 +304,10 @@ async def test_stale_attempt_cannot_clear_dispatch_required_after_requeue(
 
     assert stale_store.observed_attempt_count == 0
     assert [
-        payload for _, payload in await dispatcher_redis.client.xrange(BATCH_STREAM)
+        payload
+        for _, payload in await dispatcher_redis.client.xrange(
+            LONG_FORM_DIARIZATION_STREAM
+        )
     ] == [{"job_uuid": str(job_uuid), "attempt_count": "0"}]
     saved = await load_jobs(async_session_factory, job_uuid)
     assert saved[job_uuid].status is JobStatus.QUEUED

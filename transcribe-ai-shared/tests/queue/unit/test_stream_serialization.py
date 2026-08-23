@@ -24,7 +24,10 @@ REDIS_MESSAGE_ID = "1755684000000-0"
     ("job_type", "expected_stream"),
     [
         (JobType.FAST, TranscriptionStreamName.FAST),
-        (JobType.BATCH, TranscriptionStreamName.BATCH),
+        (
+            JobType.LONG_FORM_DIARIZATION,
+            TranscriptionStreamName.LONG_FORM_DIARIZATION,
+        ),
     ],
 )
 def test_job_type_selects_its_only_allowed_stream(
@@ -65,13 +68,13 @@ def test_deserialization_accepts_redis_byte_responses_and_ignores_extra_fields()
 
     message = JobStreamMessageCodec.deserialize(
         REDIS_MESSAGE_ID.encode(),
-        JobType.BATCH,
+        JobType.LONG_FORM_DIARIZATION,
         payload,
     )
 
     assert message.redis_message_id == REDIS_MESSAGE_ID
     assert message.job_uuid == JOB_UUID
-    assert message.job_type is JobType.BATCH
+    assert message.job_type is JobType.LONG_FORM_DIARIZATION
     assert message.attempt_count == 2
 
 

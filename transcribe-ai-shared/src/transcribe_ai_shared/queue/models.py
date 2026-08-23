@@ -15,7 +15,7 @@ class TranscriptionStreamName(StrEnum):
     """Noms stables des streams de transcription."""
 
     FAST = "transcription:fast"
-    BATCH = "transcription:batch"
+    LONG_FORM_DIARIZATION = "transcription:long-form-diarization"
 
 
 def stream_name_for_job_type(job_type: JobType) -> TranscriptionStreamName:
@@ -26,8 +26,8 @@ def stream_name_for_job_type(job_type: JobType) -> TranscriptionStreamName:
     match job_type:
         case JobType.FAST:
             return TranscriptionStreamName.FAST
-        case JobType.BATCH:
-            return TranscriptionStreamName.BATCH
+        case JobType.LONG_FORM_DIARIZATION:
+            return TranscriptionStreamName.LONG_FORM_DIARIZATION
 
     raise ValueError("job_type ne correspond à aucun stream de transcription")
 

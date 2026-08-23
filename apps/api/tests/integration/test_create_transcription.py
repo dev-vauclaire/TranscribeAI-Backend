@@ -30,7 +30,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024
 DEFAULT_FAST_MAX_DURATION_SECONDS = 60.0
-DEFAULT_BATCH_MAX_DURATION_SECONDS = 3_600.0
+DEFAULT_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS = 3_600.0
 
 
 def _valid_wav_content(*, duration_seconds: float = 0.1) -> bytes:
@@ -76,14 +76,18 @@ def _valid_audio_content(extension: str) -> bytes:
 def _api_settings(
     *,
     fast_max_duration_seconds: float = DEFAULT_FAST_MAX_DURATION_SECONDS,
-    batch_max_duration_seconds: float = DEFAULT_BATCH_MAX_DURATION_SECONDS,
+    long_form_diarization_max_duration_seconds: float = (
+        DEFAULT_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS
+    ),
 ) -> ApiSettings:
     return ApiSettings(
         max_upload_size_bytes=MAX_UPLOAD_SIZE_BYTES,
         ffprobe_path="ffprobe",
         ffprobe_timeout_seconds=10,
         fast_max_duration_seconds=fast_max_duration_seconds,
-        batch_max_duration_seconds=batch_max_duration_seconds,
+        long_form_diarization_max_duration_seconds=(
+            long_form_diarization_max_duration_seconds
+        ),
     )
 
 
@@ -167,9 +171,9 @@ async def api_client(api_app: FastAPI) -> AsyncIterator[AsyncClient]:
     ("job_type", "extension", "content_type"),
     [
         (JobType.FAST, "wav", "audio/wav"),
-        (JobType.BATCH, "mp3", "audio/mpeg"),
+        (JobType.LONG_FORM_DIARIZATION, "mp3", "audio/mpeg"),
         (JobType.FAST, "ogg", "audio/ogg"),
-        (JobType.BATCH, "m4a", "audio/mp4"),
+        (JobType.LONG_FORM_DIARIZATION, "m4a", "audio/mp4"),
     ],
 )
 async def test_post_transcriptions_commits_job_and_publishes_complete_audio(

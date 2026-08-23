@@ -3,7 +3,7 @@ from enum import StrEnum
 
 class JobType(StrEnum):
     FAST = "FAST"
-    BATCH = "BATCH"
+    LONG_FORM_DIARIZATION = "LONG_FORM_DIARIZATION"
 
 
 class JobStatus(StrEnum):

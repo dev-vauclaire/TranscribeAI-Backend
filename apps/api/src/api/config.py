@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024
 DEFAULT_FAST_MAX_DURATION_SECONDS = Decimal("900")
-DEFAULT_BATCH_MAX_DURATION_SECONDS = Decimal("14400")
+DEFAULT_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS = Decimal("14400")
 
 
 class ApiSettings(BaseSettings):
@@ -41,11 +41,11 @@ class ApiSettings(BaseSettings):
         allow_inf_nan=False,
         validation_alias="API_FAST_MAX_DURATION_SECONDS",
     )
-    batch_max_duration_seconds: Decimal = Field(
-        default=DEFAULT_BATCH_MAX_DURATION_SECONDS,
+    long_form_diarization_max_duration_seconds: Decimal = Field(
+        default=DEFAULT_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS,
         gt=0,
         allow_inf_nan=False,
-        validation_alias="API_BATCH_MAX_DURATION_SECONDS",
+        validation_alias="API_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS",
     )
 
     @field_validator("host", "ffprobe_path")
@@ -58,10 +58,13 @@ class ApiSettings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_duration_limits(self) -> "ApiSettings":
-        """Empêche une file FAST d'accepter plus longtemps que BATCH."""
-        if self.fast_max_duration_seconds > self.batch_max_duration_seconds:
+        """Ordonne les limites des profils FAST et avec diarisation."""
+        if (
+            self.fast_max_duration_seconds
+            > self.long_form_diarization_max_duration_seconds
+        ):
             raise ValueError(
                 "API_FAST_MAX_DURATION_SECONDS doit être inférieur ou égal "
-                "à API_BATCH_MAX_DURATION_SECONDS"
+                "à API_LONG_FORM_DIARIZATION_MAX_DURATION_SECONDS"
             )
         return self

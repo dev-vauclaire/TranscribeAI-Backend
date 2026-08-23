@@ -12,9 +12,10 @@ API HTTP
 → consultation HTTP
 ```
 
-Les parcours FAST et BATCH utilisent les composants applicatifs réels. Le
-scénario FAST ajoute aussi un message Redis dupliqué pour vérifier qu'un seul
-worker obtient le claim PostgreSQL et appelle le transcriber.
+Les parcours FAST et LONG_FORM_DIARIZATION utilisent les composants
+applicatifs réels. Le scénario FAST ajoute aussi un message Redis dupliqué pour
+vérifier qu'un seul worker obtient le claim PostgreSQL et appelle le
+transcriber.
 
 ## Exécution
 

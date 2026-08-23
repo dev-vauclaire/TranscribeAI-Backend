@@ -37,7 +37,7 @@ from .conftest import WorkerRedisContext
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 FAST_STREAM = "transcription:fast"
-BATCH_STREAM = "transcription:batch"
+LONG_FORM_DIARIZATION_STREAM = "transcription:long-form-diarization"
 GROUP_NAME = "transcription-workers"
 FIRST_WORKER_ID = "worker-fast-1"
 SECOND_WORKER_ID = "worker-fast-2"
@@ -181,7 +181,11 @@ class SynchronizedClaimStore:
     ("job_type", "stream_name", "worker_id"),
     [
         (JobType.FAST, FAST_STREAM, "worker-fast-1"),
-        (JobType.BATCH, BATCH_STREAM, "worker-batch-1"),
+        (
+            JobType.LONG_FORM_DIARIZATION,
+            LONG_FORM_DIARIZATION_STREAM,
+            "worker-long-form-diarization-1",
+        ),
     ],
 )
 async def test_process_next_commits_completion_before_acknowledging(
@@ -329,7 +333,7 @@ async def test_job_from_another_type_is_not_processed_by_the_wrong_stream(
     worker_redis: WorkerRedisContext,
 ) -> None:
     job = make_job()
-    job.job_type = JobType.BATCH
+    job.job_type = JobType.LONG_FORM_DIARIZATION
     async with async_transaction(async_session_factory) as session:
         await JobRepository(session).add(job)
 
@@ -599,10 +603,10 @@ async def test_reclaimed_failed_job_is_cleaned_without_inference(
             "worker-fast-recovery",
         ),
         (
-            JobType.BATCH,
-            BATCH_STREAM,
-            "worker-batch-abandoned",
-            "worker-batch-recovery",
+            JobType.LONG_FORM_DIARIZATION,
+            LONG_FORM_DIARIZATION_STREAM,
+            "worker-long-form-diarization-abandoned",
+            "worker-long-form-diarization-recovery",
         ),
     ],
 )

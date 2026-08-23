@@ -148,11 +148,13 @@ def make_job(
 ) -> TranscriptionJob:
     return TranscriptionJob(
         job_uuid=JOB_UUID,
-        job_type=JobType.BATCH,
+        job_type=JobType.LONG_FORM_DIARIZATION,
         audio_uri=f"{JOB_UUID}/input.wav",
         attempt_count=3,
         last_dispatched_at=last_dispatched_at,
-        lease_owner="worker-batch-1" if lease_expires_at is not None else None,
+        lease_owner=(
+            "worker-long-form-diarization-1" if lease_expires_at is not None else None
+        ),
         lease_expires_at=lease_expires_at,
     )
 
@@ -177,7 +179,7 @@ async def test_find_snapshots_jobs_and_closes_the_read_session() -> None:
     assert snapshots == [
         DispatchJobSnapshot(
             job_uuid=JOB_UUID,
-            job_type=JobType.BATCH,
+            job_type=JobType.LONG_FORM_DIARIZATION,
             attempt_count=3,
             last_dispatched_at=LAST_DISPATCHED_AT,
         ),

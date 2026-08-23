@@ -121,7 +121,7 @@ async def test_run_worker_composes_runtime_and_keeps_resources_between_iteration
             ),
             redis_settings=RedisSettings(redis_url="redis://localhost:6379/0"),
             worker_settings=WorkerSettings(
-                worker_id="batch-1",
+                worker_id="long-form-diarization-1",
                 worker_consumer_group="workers",
                 worker_block_milliseconds=250,
                 worker_autoclaim_interval_seconds=30,
@@ -130,7 +130,7 @@ async def test_run_worker_composes_runtime_and_keeps_resources_between_iteration
                 max_attempts=5,
             ),
             transcriber=transcriber,
-            job_type=JobType.BATCH,
+            job_type=JobType.LONG_FORM_DIARIZATION,
             on_result=stop_after_first_result,
             monotonic=lambda: 0.0,
         )
@@ -138,16 +138,16 @@ async def test_run_worker_composes_runtime_and_keeps_resources_between_iteration
     assert captured["result"] is expected_result
     assert captured["redis_url"] == "redis://localhost:6379/0"
     assert captured["session_factory"] is session_factory
-    assert captured["store_job_type"] is JobType.BATCH
+    assert captured["store_job_type"] is JobType.LONG_FORM_DIARIZATION
     assert captured["transcriber"] is transcriber
     assert captured["completion_session_factory"] is session_factory
     assert captured["failure_session_factory"] is session_factory
     assert isinstance(captured["completer"], FakeCompleter)
     assert isinstance(captured["failure_handler"], FakeFailureHandler)
     assert captured["max_attempts"] == 5
-    assert captured["job_type"] is JobType.BATCH
+    assert captured["job_type"] is JobType.LONG_FORM_DIARIZATION
     assert captured["group_name"] == "workers"
-    assert captured["worker_id"] == "batch-1"
+    assert captured["worker_id"] == "long-form-diarization-1"
     assert captured["lease_duration"] == timedelta(seconds=90)
     assert captured["heartbeat_interval"] == timedelta(seconds=60)
     assert captured["min_idle_milliseconds"] == 12_000

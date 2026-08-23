@@ -119,7 +119,10 @@ async def test_is_processing_attempt_reads_and_closes_a_short_session() -> None:
             status=JobStatus.PROCESSING,
             attempt_count=EXPECTED_ATTEMPT_COUNT + 1,
         ),
-        make_job(status=JobStatus.PROCESSING, job_type=JobType.BATCH),
+        make_job(
+            status=JobStatus.PROCESSING,
+            job_type=JobType.LONG_FORM_DIARIZATION,
+        ),
     ],
     ids=[
         "missing",
@@ -312,7 +315,7 @@ async def test_mismatched_job_type_rolls_back_the_claim(
         recording_transaction,
     )
     job = make_job()
-    job.job_type = JobType.BATCH
+    job.job_type = JobType.LONG_FORM_DIARIZATION
     repository = RecordingRepository(object(), job, events)
     store = PostgresWorkerJobStore(
         cast(AsyncSessionFactory, object()),
@@ -330,5 +333,5 @@ async def test_mismatched_job_type_rolls_back_the_claim(
 
     assert raised.value.job_uuid == JOB_UUID
     assert raised.value.expected_job_type is JobType.FAST
-    assert raised.value.actual_job_type is JobType.BATCH
+    assert raised.value.actual_job_type is JobType.LONG_FORM_DIARIZATION
     assert events == ["transaction_enter", "claim", "transaction_rollback"]

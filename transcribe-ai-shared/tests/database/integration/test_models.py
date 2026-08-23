@@ -70,7 +70,10 @@ def test_postgresql_uses_native_uuid_jsonb_and_enums(setup_db):
         "FAILED",
     ]
     assert isinstance(job_columns["job_type"]["type"], ENUM)
-    assert job_columns["job_type"]["type"].enums == ["FAST", "BATCH"]
+    assert job_columns["job_type"]["type"].enums == [
+        "FAST",
+        "LONG_FORM_DIARIZATION",
+    ]
     assert isinstance(job_columns["dispatch_required"]["type"], Boolean)
     assert job_columns["dispatch_required"]["nullable"] is False
     assert job_columns["dispatch_required"]["default"] == "true"
@@ -98,7 +101,10 @@ def test_postgresql_result_foreign_key_restricts_parent_changes(setup_db):
     }
 
 
-@pytest.mark.parametrize("job_type", [JobType.FAST, JobType.BATCH])
+@pytest.mark.parametrize(
+    "job_type",
+    [JobType.FAST, JobType.LONG_FORM_DIARIZATION],
+)
 def test_job_defaults_and_enums_are_persisted(db_session, job_type):
     job = make_job(job_type=job_type)
     db_session.add(job)

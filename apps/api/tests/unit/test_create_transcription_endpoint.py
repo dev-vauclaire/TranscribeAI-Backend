@@ -44,7 +44,7 @@ TEST_SETTINGS = ApiSettings(
     ffprobe_path="ffprobe",
     ffprobe_timeout_seconds=30,
     fast_max_duration_seconds=Decimal("900"),
-    batch_max_duration_seconds=Decimal("14400"),
+    long_form_diarization_max_duration_seconds=Decimal("14400"),
 )
 
 
@@ -154,7 +154,10 @@ async def post_transcription(
         )
 
 
-@pytest.mark.parametrize("job_type", [JobType.FAST, JobType.BATCH])
+@pytest.mark.parametrize(
+    "job_type",
+    [JobType.FAST, JobType.LONG_FORM_DIARIZATION],
+)
 async def test_post_transcriptions_returns_202_location_and_queued_job(
     job_type: JobType,
 ) -> None:

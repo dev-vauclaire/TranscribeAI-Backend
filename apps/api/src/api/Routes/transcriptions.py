@@ -62,7 +62,10 @@ async def post_transcription(
     ],
     transcription_type: Annotated[
         JobType,
-        Form(alias="type", description="File de traitement FAST ou BATCH."),
+        Form(
+            alias="type",
+            description="File de traitement FAST ou LONG_FORM_DIARIZATION.",
+        ),
     ],
     service: Annotated[
         CreateTranscriptionService,
