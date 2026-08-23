@@ -2,6 +2,11 @@
 
 Ce package fournit les composants communs aux applications du backend.
 
+Ses frontières sont résumées dans
+[l'architecture](../docs/architecture.md). Le runtime durable est décrit dans
+[les workflows](../docs/workflows.md) et le format produit par les moteurs dans
+[les contrats de transcription](../docs/transcription-contracts.md).
+
 ## Structure
 
 - `database` : configuration PostgreSQL, moteur, sessions, modèles et
@@ -10,6 +15,7 @@ Ce package fournit les composants communs aux applications du backend.
 - `storage` : contrat de stockage audio et implémentation sur système de
   fichiers ;
 - `worker` : runtime, contrats et composition communs aux processus workers.
+- `observability` : logs JSON et liste positive de champs techniques ;
 - `worker_healthcheck.py` : sonde exécutable des dépendances indispensables aux
   workers, sans serveur HTTP.
 
@@ -100,6 +106,10 @@ les variables d'environnement suivantes :
 | Classe | Variable | Obligatoire | Défaut |
 | --- | --- | --- | --- |
 | `DatabaseSettings` | `DATABASE_URL` | oui | — |
+| `DatabaseSettings` | `DATABASE_ECHO` | non | `false` |
+| `DatabaseSettings` | `DATABASE_POOL_SIZE` | non | `4` |
+| `DatabaseSettings` | `DATABASE_MAX_OVERFLOW` | non | `0` |
+| `DatabaseSettings` | `DATABASE_POOL_TIMEOUT_SECONDS` | non | `30` |
 | `RedisSettings` | `REDIS_URL` | oui | — |
 | `StorageSettings` | `AUDIO_STORAGE_PATH` | non | `tmp/audios_buffers` |
 | `WorkerSettings` | `WORKER_ID` | oui | — |
@@ -110,6 +120,10 @@ les variables d'environnement suivantes :
 | `WorkerSettings` | `WORKER_LEASE_SECONDS` | non | `300` |
 | `WorkerSettings` | `WORKER_HEARTBEAT_SECONDS` | non | `60` |
 | `WorkerSettings` | `MAX_ATTEMPTS` | non | `3` |
+
+`DATABASE_URL` accepte `postgresql` ou `postgresql+psycopg2`. Le moteur
+asynchrone remplace ensuite explicitement le driver par `asyncpg`. Le moteur
+synchrone reste utilisé par l'application migration.
 
 Le package ne charge pas implicitement de fichier `.env` : le point d'entrée de
 chaque application reste responsable de fournir son environnement.

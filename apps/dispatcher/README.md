@@ -7,6 +7,27 @@ un batch de recovery des leases, un batch de réconciliation puis un batch de
 dispatch, libère ses connexions et termine. La planification reste sous la
 responsabilité de l'infrastructure.
 
+Le contexte transverse est décrit dans
+[l'architecture](../../docs/architecture.md), les
+[workflows](../../docs/workflows.md) et le
+[guide d'exploitation](../../docs/operations.md).
+
+## Repères dans le code
+
+- `application.py` compose PostgreSQL, Redis et les trois services du cycle.
+- `recovery.py` récupère les leases PostgreSQL réellement expirés.
+- `reconciliation.py` réarme les publications anciennes potentiellement
+  perdues.
+- `service.py` publie les jobs dispatchables puis confirme leur publication.
+- `postgresql.py` adapte les transactions courtes et les snapshots détachés.
+- `protocols.py` décrit les ports injectés dans les services.
+- `main.py` expose le code de sortie et les résumés structurés.
+
+`DISPATCHER_BATCH_SIZE` s'applique séparément aux trois phases. Un job récupéré
+ou réarmé peut devenir éligible au dispatch pendant le même cycle. Une erreur
+individuelle est comptée sans bloquer son batch ; une panne globale d'une phase
+interrompt le cycle et empêche les phases suivantes.
+
 ## Recovery des leases expirés
 
 Le dispatcher commence par sélectionner les jobs `PROCESSING` dont
@@ -70,6 +91,11 @@ Pour chaque job sélectionné, il publie `job_uuid` et `attempt_count` dans
 La confirmation PostgreSQL n'est exécutée qu'après le succès de `XADD` et
 utilise `attempt_count` comme garde de concurrence.
 
+Elle ne filtre volontairement pas sur `status=QUEUED` : un worker peut avoir
+claim le job entre `XADD` et cette confirmation. L'attempt et la valeur
+`last_dispatched_at` observée empêchent en revanche une confirmation retardée
+d'écraser un réarmement plus récent.
+
 Les publications sont intentionnellement **at-least-once** : si Redis accepte
 le message mais que la confirmation PostgreSQL échoue, le job reste éligible
 et une exécution suivante peut republier le même message. Le dispatcher ne
@@ -127,6 +153,28 @@ doivent recevoir la même valeur dans un déploiement.
 Les URL de connexion doivent être fournies par le mécanisme de secrets de
 l'orchestrateur et ne sont jamais journalisées.
 
+Les paramètres du pool PostgreSQL sont documentés dans le
+[README partagé](../../transcribe-ai-shared/README.md). Le dispatcher ne crée
+ni consumer group, ni ACK : ces opérations appartiennent aux workers.
+
+## Journalisation
+
+Chaque cycle journalise des événements par job et trois résumés : recovery,
+réconciliation et dispatch. Les compteurs sélectionnés, réarmés, publiés,
+confirmés, obsolètes et en erreur permettent de superviser le backlog sans
+exposer de payload ou d'URL de connexion.
+
+## Tests
+
+```bash
+uv run pytest -m unit apps/dispatcher/tests
+uv run pytest -m integration apps/dispatcher/tests
+```
+
+Les tests d'intégration utilisent PostgreSQL et Redis via Testcontainers. Ils
+valident notamment la publication at-least-once, les CAS obsolètes, les leases
+renouvelés pendant la recovery et les doublons neutralisés par le claim.
+
 ## Image Docker
 
 L'image doit être construite depuis la racine du workspace :
@@ -154,3 +202,13 @@ docker run --rm \
 Le conteneur s'exécute avec un utilisateur non privilégié, n'expose aucun port
 et doit être relancé par un cron, un CronJob ou un autre orchestrateur selon la
 fréquence de dispatch souhaitée.
+
+Dans le Compose racine, il reste sous le profil `operations` et s'exécute une
+fois avec :
+
+```bash
+docker compose --profile operations run --rm dispatcher
+```
+
+N'utilisez pas une politique `restart: always` pour simuler un scheduler : elle
+produirait une boucle serrée de cycles one-shot.

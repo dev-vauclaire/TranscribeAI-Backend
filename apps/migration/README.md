@@ -5,6 +5,23 @@ Le processus exécute `upgrade head`, puis termine avec un code nul. Toute erreu
 de configuration, de connexion ou de migration provoque un code de sortie non
 nul.
 
+Le contexte transverse est décrit dans
+[l'architecture](../../docs/architecture.md), le
+[guide de développement](../../docs/development.md) et le
+[guide d'exploitation](../../docs/operations.md).
+
+## Repères dans le code
+
+- `main.py` crée le moteur, ouvre la transaction et lance `upgrade head`.
+- `alembic.ini` et `migrations/env.py` composent Alembic avec la connexion déjà
+  ouverte.
+- `migrations/versions/` contient les révisions ordonnées.
+- `tests/integration/` valide chaque upgrade et downgrade réel sur PostgreSQL.
+
+Alembic reçoit la transaction du point d'entrée. Sa configuration de logs est
+désactivée afin de conserver le formatter JSON commun. Le moteur est toujours
+disposé, que la migration réussisse ou non.
+
 ## Configuration
 
 La variable `DATABASE_URL` est obligatoire et doit utiliser le pilote synchrone
@@ -16,6 +33,13 @@ Exemple local :
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres \
   uv run --package migration database-migrate
 ```
+
+La commande retourne `0` après `upgrade head`, `1` pour une erreur et `130`
+pour une interruption. Elle émet l'événement structuré `migration` avec les
+actions `started`, `completed`, `failed` ou `interrupted`.
+
+Une seule instance doit migrer une base pendant un déploiement. Aucun downgrade
+automatique n'est exécuté après un échec applicatif.
 
 ## Révisions
 
@@ -40,6 +64,16 @@ centralisés dans `tests/integration/common.py`.
 Le downgrade vers `base` est destructif : il supprime les deux tables et les
 types enum associés. Alembic conserve sa table technique vide
 `alembic_version`.
+
+Tests disponibles :
+
+```bash
+uv run pytest -m unit apps/migration/tests
+uv run pytest -m integration apps/migration/tests
+```
+
+Les intégrations ciblent PostgreSQL 16 via Testcontainers. Le smoke Compose
+construit aussi l'image et exécute son entrypoint sur une base vide.
 
 ## Image Docker
 
@@ -68,3 +102,7 @@ l'orchestrateur et ne doit pas être inscrite directement dans la commande.
 
 Cette image est destinée à un Job ou à un init container. Elle n'expose aucun
 port et ne lance pas de boucle permanente.
+
+Dans le Compose racine, `migration` dépend de PostgreSQL healthy. L'API et les
+workers dépendent ensuite de son état `service_completed_successfully`, ce qui
+empêche une readiness trompeuse sur une base joignable mais non migrée.

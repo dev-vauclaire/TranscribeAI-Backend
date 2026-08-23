@@ -10,6 +10,23 @@ PostgreSQL selon
 `COMPLETED` sont committés ensemble avant l'ACK Redis. Elle ne contient aucune
 dépendance FastAPI ou Flask.
 
+Le runtime durable est documenté une seule fois dans les
+[workflows](../../docs/workflows.md). Les champs de sortie, règles de fusion et
+codes d'erreur vivent dans les
+[contrats de transcription](../../docs/transcription-contracts.md). Le
+[guide d'exploitation](../../docs/operations.md) couvre les probes, volumes,
+caches et crashes.
+
+## Repères dans le code
+
+- `application.py` fixe `JobType.LONG_FORM_DIARIZATION`.
+- `main.py` compose le stockage et choisit le backend configuré.
+- `config.py` valide les modèles, le device, le token et le cache absolu.
+- `transcribers/whisperx_factory.py` charge une seule fois les modèles.
+- `transcribers/whisperx.py` matérialise l'audio et normalise le pipeline ML.
+- le claim, le heartbeat, la finalisation, le retry et l'ACK vivent dans
+  `transcribe_ai_shared.worker`.
+
 L'adapter de production utilise
 [WhisperX 3.8.6](https://github.com/m-bain/whisperX/tree/v3.8.6) pour la
 transcription et l'alignement, puis
@@ -104,6 +121,11 @@ reprises : WhisperX 3.8.6 impose la famille Torch 2.8 et
 `huggingface-hub<1`. Le lockfile utilise donc ces contraintes compatibles
 plutôt qu'un assemblage qui ne peut pas être résolu.
 
+Une erreur indiquant que les dépendances WhisperX sont absentes signifie que
+l'environnement a été synchronisé sans extra. Réexécutez `uv sync` ou
+`uv run` avec exactement un des extras `cpu` ou `gpu` ; le test GPU ne doit pas
+être lancé avec le seul exécutable `pytest` d'un environnement de base.
+
 Pour une exécution CPU locale :
 
 ```shell
@@ -138,6 +160,7 @@ Construire l'image depuis la racine du workspace :
 
 ```shell
 docker build --file apps/worker-long-form-diarization/Dockerfile \
+  --target runtime-gpu \
   --tag transcribe-ai-worker-long-form-diarization .
 ```
 
@@ -167,6 +190,16 @@ Redis sont résolubles. Avec un bind mount, `/models` doit être inscriptible pa
 l'UID `10001`; un volume Docker neuf hérite des permissions de l'image. Chaque
 replica charge sa propre copie des modèles : le nombre de replicas doit donc
 être dimensionné selon la VRAM disponible.
+
+Le Dockerfile expose `runtime-fake`, `runtime-cpu` et `runtime-gpu`. Le Compose
+de base n'installe ni WhisperX, ni Pyannote, ni Torch. Les overrides CPU/GPU
+sélectionnent l'extra correspondant et montent le cache `/models`. Exemple GPU,
+après injection du token par l'environnement :
+
+```shell
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
+  up --build --detach worker-long-form-diarization
+```
 
 ## Healthcheck
 
@@ -245,3 +278,8 @@ uv run --package worker-long-form-diarization --extra gpu \
 
 Le second scénario exerce le runtime commun avec PostgreSQL et Redis réels via
 Testcontainers, notamment face à deux messages dupliqués.
+
+Le test GPU est un smoke test : il ne fixe pas de seuil de qualité, de temps
+d'inférence ou de nombre minimal de speakers. Les artefacts modèles distants ne
+sont pas encore pinés par révision ; le lockfile fige les dépendances Python,
+pas les poids téléchargés.

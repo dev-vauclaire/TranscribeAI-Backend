@@ -9,6 +9,23 @@ Pendant l'inférence, elle renouvelle le lease PostgreSQL selon
 `COMPLETED` sont committés ensemble avant l'ACK Redis. Elle ne contient aucune
 logique HTTP.
 
+Le runtime durable est documenté une seule fois dans les
+[workflows](../../docs/workflows.md). Les champs de sortie et codes d'erreur
+vivent dans les
+[contrats de transcription](../../docs/transcription-contracts.md). Le
+[guide d'exploitation](../../docs/operations.md) couvre les probes, volumes et
+crashes.
+
+## Repères dans le code
+
+- `application.py` fixe `JobType.FAST` et délègue à la boucle partagée.
+- `main.py` construit le stockage et charge une seule instance du modèle.
+- `config.py` valide le backend, le modèle, le device et le compute type.
+- `transcribers/faster_whisper.py` adapte exclusivement le moteur vers
+  `TranscriptionOutput`.
+- le claim, le heartbeat, la finalisation, le retry et l'ACK vivent dans
+  `transcribe_ai_shared.worker`.
+
 L'adapter de production utilise
 [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper) avec
 `large-v3-turbo` par défaut. La langue est toujours fixée à `fr` et le filtre
@@ -68,12 +85,16 @@ Pour une exécution CPU explicite :
 WORKER_ID=worker-fast-local \
 WORKER_TRANSCRIBER_DEVICE=cpu \
 WORKER_TRANSCRIBER_COMPUTE_TYPE=int8 \
-uv run --package worker-fast worker-fast
+uv run --package worker-fast --extra cpu worker-fast
 ```
 
 Le modèle est téléchargé depuis Hugging Face au premier démarrage si sa valeur
 n'est pas un dossier local. Le cache doit être persistant en production afin
 d'éviter un nouveau téléchargement à chaque déploiement.
+
+Faster-Whisper appartient aux extras `cpu` et `gpu`, pas aux dépendances de
+base. Un lancement du backend réel sans l'un de ces extras échoue avec un
+message explicite ; le backend fake reste importable sans moteur ML.
 
 ## Exécution avec GPU dans Docker
 
@@ -100,6 +121,7 @@ Construire puis lancer le worker depuis la racine du workspace :
 
 ```shell
 docker build --file apps/worker-fast/Dockerfile \
+  --target runtime-gpu \
   --tag transcribe-ai-worker-fast .
 
 docker run --rm --gpus all \
@@ -109,7 +131,7 @@ docker run --rm --gpus all \
   --env WORKER_ID=worker-fast-1 \
   --volume transcribe-audio:/data/transcriptions:ro \
   --volume transcribe-models:/models \
-  transcribe-ai-worker-fast
+transcribe-ai-worker-fast
 ```
 
 `backend-network` doit être remplacé par le réseau Docker sur lequel les noms
@@ -122,6 +144,16 @@ Chaque replica charge sa propre copie du modèle et consomme donc sa propre
 mémoire GPU. Le dimensionnement du nombre de replicas doit tenir compte de la
 VRAM disponible. Le pilote de l'hôte doit être compatible avec CUDA 12.9 selon
 la [matrice NVIDIA](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html).
+
+Le Dockerfile expose trois cibles : `runtime-fake` pour la stack de
+développement sans moteur ML, `runtime-cpu` et `runtime-gpu`. Le Compose de
+base sélectionne le fake ; l'override GPU sélectionne la cible réelle, réserve
+le device NVIDIA et monte `/models` :
+
+```shell
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
+  up --build --detach worker-fast
+```
 
 ## Healthcheck
 
@@ -193,3 +225,7 @@ uv run --package worker-fast --extra gpu \
 
 Il n'est pas sélectionné par la commande `pytest -m unit` utilisée dans la CI
 standard.
+
+Ce test GPU est un smoke test d'inférence, pas une mesure de qualité du texte ou
+de performance. Les artefacts distants du modèle ne sont pas encore pinés par
+révision ; le lockfile fige les dépendances Python, pas les poids téléchargés.
